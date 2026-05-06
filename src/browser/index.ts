@@ -34,7 +34,7 @@ export class BrowserManager {
     }
   }
 
-  private async withPage<T>(
+  private async withContext<T>(
     fn: (ctx: BrowserContext) => Promise<T>
   ): Promise<T> {
     if (!this.browser) await this.launch();
@@ -57,7 +57,7 @@ export class BrowserManager {
     const type = "ping" as const;
 
     try {
-      return await this.withPage(async (context) => {
+      return await this.withContext(async (context) => {
         const page = await context.newPage();
         const response = await page.goto(url, {
           timeout: 10_000,
@@ -105,7 +105,7 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      return await this.withPage(async (context) => {
+      return await this.withContext(async (context) => {
         const page = await context.newPage();
 
         const response = await page.goto(url, {
