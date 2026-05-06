@@ -1,5 +1,7 @@
 /**
- * tools/browser.ts — MCP tools for browser interaction.
+ * tools/browser.ts
+ *
+ * MCP tools for browser interaction.
  * Rule: one file per tool group, export a register(server) function.
  */
 
@@ -10,11 +12,23 @@ import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
 export function register(server: McpServer): void {
+  // -------------------------------------------------------------------------
+  // Tool: browser_ping
+  // -------------------------------------------------------------------------
   server.tool(
     "browser_ping",
-    "Open an isolated browser context, navigate to a URL, and return page metadata (title, URL, timestamp). Validates the MCP ↔ browser bridge.",
+    [
+      "Open an isolated browser context, navigate to a URL, and return page",
+      "metadata (title, URL, timestamp). Validates the MCP ↔ browser bridge.",
+      "Returns a structured error if the URL is unreachable.",
+    ].join(" "),
     {
-      url: z.string().url().describe("URL to ping (e.g. http://localhost:5173)."),
+      url: z
+        .string()
+        .url()
+        .describe(
+          "URL of the page to ping (e.g. http://localhost:5173)."
+        ),
     },
     async ({ url }): Promise<ToolResponse> => {
       try {

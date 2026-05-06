@@ -3,6 +3,10 @@
  *
  * BrowserManager: wraps Playwright to provide isolated browser contexts
  * for each MCP tool call. Auto-launches on first use.
+ *
+ * Rules enforced:
+ *   - Each tool call creates a new isolated BrowserContext, closed in finally.
+ *   - Navigation errors (ECONNREFUSED, timeout) return structured errors.
  */
 
 import { chromium } from "playwright";
@@ -14,12 +18,14 @@ import { detectReact } from "../diagnostics/react-detector.js";
 export class BrowserManager {
   private browser: Browser | null = null;
 
+  /** Launch a headless Chromium instance (idempotent). */
   async launch(): Promise<void> {
     if (this.browser) return;
     this.browser = await chromium.launch({ headless: true });
     console.error("[react-sentinel] Browser launched (headless chromium)");
   }
 
+  /** Close browser and release all resources. */
   async close(): Promise<void> {
     if (this.browser) {
       await this.browser.close();
@@ -28,12 +34,7 @@ export class BrowserManager {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Shared: navigate to URL in an isolated context
-  // ---------------------------------------------------------------------------
-
   private async withPage<T>(
-    url: string,
     fn: (ctx: BrowserContext) => Promise<T>
   ): Promise<T> {
     if (!this.browser) await this.launch();
@@ -43,21 +44,20 @@ export class BrowserManager {
       context = await this.browser!.newContext();
       return await fn(context);
     } finally {
-      // Rule: always close browser contexts in a finally block
       if (context) await context.close();
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // ping() — SCRUM-23
-  // ---------------------------------------------------------------------------
-
+  /**
+   * Ping a URL — opens an isolated context, navigates, extracts metadata.
+   * Handles SCRUM-20: returns structured error when app is unreachable.
+   */
   async ping(url: string): Promise<BrowserResult> {
     const start = Date.now();
     const type = "ping" as const;
 
     try {
-      return await this.withPage(url, async (context) => {
+      return await this.withPage(async (context) => {
         const page = await context.newPage();
         const response = await page.goto(url, {
           timeout: 10_000,
@@ -105,7 +105,7 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      return await this.withPage(url, async (context) => {
+      return await this.withPage(async (context) => {
         const page = await context.newPage();
 
         const response = await page.goto(url, {
@@ -119,7 +119,6 @@ export class BrowserManager {
           };
         }
 
-        // Collect page metadata + React detection in a single evaluate call
         const [pageUrl, title, viewport, react] = await Promise.all([
           page.evaluate<string>(() => document.URL),
           page.evaluate<string>(() => document.title),
@@ -127,7 +126,6 @@ export class BrowserManager {
             width: window.innerWidth,
             height: window.innerHeight,
           })),
-          // Inject and run the self-contained react detector
           page.evaluate(detectReact),
         ]);
 

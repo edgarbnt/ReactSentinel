@@ -27,7 +27,7 @@ const server = new McpServer({
 });
 
 // ---------------------------------------------------------------------------
-// Core tools
+// Core tools (health-check, introspection)
 // ---------------------------------------------------------------------------
 
 server.tool(
@@ -101,6 +101,7 @@ async function main(): Promise<void> {
   await server.connect(transport);
   console.error("[react-sentinel] MCP server started (stdio transport) ✅");
 
+  // Graceful shutdown — close browser on exit
   const shutdown = async (): Promise<void> => {
     console.error("[react-sentinel] Shutting down...");
     await browserManager.close();

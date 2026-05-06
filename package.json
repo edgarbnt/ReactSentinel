@@ -4,6 +4,9 @@
   "description": "Autonomous debugging infrastructure for AI agents — MCP server bridging AI terminals to browser runtime",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "react-sentinel": "dist/index.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
@@ -21,6 +24,16 @@
     "tsx": "^4.19.4",
     "typescript": "^5.8.3"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "mcp",
+    "react",
+    "debugging",
+    "ai",
+    "playwright",
+    "devtools"
+  ],
   "license": "MIT"
 }
