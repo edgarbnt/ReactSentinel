@@ -35,7 +35,7 @@ export class BrowserManager {
   }
 
   private async withContext<T>(
-    fn: (ctx: BrowserContext) => Promise<T>
+    fn: (context: BrowserContext) => Promise<T>
   ): Promise<T> {
     if (!this.browser) await this.launch();
 
