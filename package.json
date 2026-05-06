@@ -27,5 +27,13 @@
   "engines": {
     "node": ">=20"
   },
+  "keywords": [
+    "mcp",
+    "react",
+    "debugging",
+    "ai",
+    "playwright",
+    "devtools"
+  ],
   "license": "MIT"
 }
