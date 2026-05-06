@@ -3,8 +3,7 @@
  * React-Sentinel MCP Server — entry point
  *
  * Bridges AI terminals (Claude, Copilot CLI…) to a live browser runtime
- * via the Model Context Protocol (MCP), enabling runtime inspection,
- * shadow sandboxing, and interaction simulation.
+ * via the Model Context Protocol (MCP).
  *
  * Transport: stdio (compatible with all MCP clients out of the box).
  */
@@ -12,28 +11,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-/** Uniform MCP tool response shape (rule: always use this format). */
-type ToolResponse = { content: [{ type: "text"; text: string }] };
-
-/** Structured error returned by tool handlers — never throw. */
-interface ToolError {
-  error: true;
-  message: string;
-}
-
-function ok(data: unknown): ToolResponse {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-}
-
-function err(message: string): ToolResponse {
-  const body: ToolError = { error: true, message };
-  return { content: [{ type: "text", text: JSON.stringify(body, null, 2) }] };
-}
+import { ok, err } from "./types.js";
+import type { ToolResponse } from "./types.js";
+import { browserManager } from "./browser/index.js";
+import * as browserTools from "./tools/browser.js";
 
 // ---------------------------------------------------------------------------
 // Server
@@ -45,7 +26,7 @@ const server = new McpServer({
 });
 
 // ---------------------------------------------------------------------------
-// Tool: ping — health-check
+// Core tools (health-check, introspection)
 // ---------------------------------------------------------------------------
 
 server.tool(
@@ -61,10 +42,6 @@ server.tool(
   }
 );
 
-// ---------------------------------------------------------------------------
-// Tool: get_server_info — capability manifest
-// ---------------------------------------------------------------------------
-
 server.tool(
   "get_server_info",
   "Returns metadata and planned capabilities of this React-Sentinel instance.",
@@ -76,11 +53,11 @@ server.tool(
         version: "0.1.0",
         transport: "stdio",
         capabilities: {
+          browser_ping: "available",
           runtime_inspection: "planned",
           shadow_sandbox: "planned",
           interaction_simulation: "planned",
         },
-        status: "bootstrap — stack validated",
       });
     } catch (e) {
       return err(`get_server_info failed: ${String(e)}`);
@@ -88,13 +65,9 @@ server.tool(
   }
 );
 
-// ---------------------------------------------------------------------------
-// Tool: echo — development utility
-// ---------------------------------------------------------------------------
-
 server.tool(
   "echo",
-  "Echoes back the provided message. Useful for testing the MCP transport layer.",
+  "Echoes back the provided message. Useful for testing the MCP transport.",
   { message: z.string().describe("The message to echo back.") },
   async ({ message }): Promise<ToolResponse> => {
     try {
@@ -106,14 +79,28 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Browser tools (SCRUM-12)
+// ---------------------------------------------------------------------------
+
+browserTools.register(server);
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  // Log to stderr — stdout is reserved for the MCP protocol messages.
   console.error("[react-sentinel] MCP server started (stdio transport) ✅");
+
+  // Graceful shutdown — close browser on exit
+  const shutdown = async (): Promise<void> => {
+    console.error("[react-sentinel] Shutting down...");
+    await browserManager.close();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => { void shutdown(); });
+  process.on("SIGTERM", () => { void shutdown(); });
 }
 
 main().catch((e: unknown) => {
