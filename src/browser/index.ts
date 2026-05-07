@@ -74,7 +74,7 @@ export class BrowserManager {
   }
 
   /** Gets the persistent page, navigating if the URL is different. */
-  private async getPage(url: string): Promise<Page> {
+  public async getPage(url: string): Promise<Page> {
     if (!this.page) await this.launch();
 
     const currentUrl = this.page!.url();
@@ -95,6 +95,16 @@ export class BrowserManager {
     }
 
     return this.page!;
+  }
+
+  /** Evaluates a script in the context of the page. */
+  async evaluate<T>(url: string, script: string | (() => T | Promise<T>)): Promise<T | { error: string }> {
+    try {
+      const page = await this.getPage(url);
+      return await page.evaluate(script);
+    } catch (e) {
+      return this.handleError(e, url) as { error: string };
+    }
   }
 
   private handleError(e: unknown, url: string) {
@@ -236,6 +246,57 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleError(e, url);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // simulateInteraction() — SCRUM-13
+  // ---------------------------------------------------------------------------
+  async simulateInteraction(
+    url: string,
+    action: "click" | "type" | "fill",
+    selector: string,
+    value?: string
+  ): Promise<import("./protocol.js").InteractionData> {
+    const start = Date.now();
+    try {
+      const page = await this.getPage(url);
+
+      // Wait for element to be present with a short timeout
+      // This handles SCRUM-50: elements might not be immediately available
+      try {
+        await page.waitForSelector(selector, { state: "visible", timeout: 3000 });
+      } catch (e) {
+        return {
+          success: false,
+          action,
+          selector,
+          error: `Element not found or not visible: ${selector}`,
+        };
+      }
+
+      const element = page.locator(selector);
+
+      if (action === "click") {
+        await element.click();
+      } else if (action === "type") {
+        await element.type(value || "");
+      } else if (action === "fill") {
+        await element.fill(value || "");
+      }
+
+      return {
+        success: true,
+        action,
+        selector,
+      };
+    } catch (e) {
+      return {
+        success: false,
+        action,
+        selector,
+        error: String(e),
+      };
     }
   }
 }

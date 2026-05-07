@@ -6,8 +6,23 @@
 
 /** A request the MCP server sends to the browser runtime. */
 export interface BrowserRequest {
-  type: "ping" | "evaluate";
+  type: "ping" | "evaluate" | "interaction";
   payload?: Record<string, unknown>;
+}
+
+/** Interaction request payload */
+export interface InteractionPayload {
+  action: "click" | "type" | "fill";
+  selector: string;
+  value?: string; // For type/fill actions
+}
+
+/** Interaction result data */
+export interface InteractionData {
+  success: boolean;
+  action: InteractionPayload["action"];
+  selector: string;
+  error?: string;
 }
 
 /** Successful browser response. */
