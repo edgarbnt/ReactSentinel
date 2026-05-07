@@ -299,6 +299,55 @@ export class BrowserManager {
       };
     }
   }
+
+  /** Clears the accumulated console events. Useful before an interaction. */
+  clearConsoleEvents(): void {
+    this.consoleEvents = [];
+  }
+
+  /** Validates an assertion on the current page state. */
+  async validate(url: string, assertion: import("./protocol.js").Assertion): Promise<import("./protocol.js").ValidationResult> {
+    try {
+      const page = await this.getPage(url);
+
+      if (assertion.type === "text_present") {
+        const text = assertion.expected || "";
+        const found = await page.evaluate((t) => {
+          return document.body.innerText.includes(t);
+        }, text);
+
+        return {
+          pass: found,
+          assertion,
+          details: found ? `Text "${text}" found.` : `Text "${text}" not found in page body.`,
+        };
+      }
+
+      if (assertion.type === "no_console_errors") {
+        const errors = this.consoleEvents.filter(e => e.type === "error" || e.type === "exception");
+        const pass = errors.length === 0;
+
+        return {
+          pass,
+          assertion,
+          details: pass ? "No console errors detected." : `Detected ${errors.length} console errors.`,
+          actual: pass ? undefined : errors,
+        };
+      }
+
+      return {
+        pass: false,
+        assertion,
+        details: `Unknown assertion type: ${assertion.type}`,
+      };
+    } catch (e) {
+      return {
+        pass: false,
+        assertion,
+        details: `Validation failed: ${String(e)}`,
+      };
+    }
+  }
 }
 
 /** Singleton shared across all MCP tool calls. */

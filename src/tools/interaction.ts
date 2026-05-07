@@ -36,4 +36,66 @@ export function register(server: McpServer): void {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // Tool: validate_after_action — SCRUM-14
+  // -------------------------------------------------------------------------
+  server.tool(
+    "validate_after_action",
+    [
+      "Performs an interaction followed by a validation assertion in a single flow.",
+      "Useful for experimental validation: 'If I click this, does the error disappear?' or 'Does the text X appear?'.",
+    ].join(" "),
+    {
+      url: z.string().url().describe("The URL of the page."),
+      interaction: z.object({
+        action: z.enum(["click", "type", "fill"]),
+        selector: z.string(),
+        value: z.string().optional(),
+      }).describe("The interaction to perform."),
+      assertion: z.object({
+        type: z.enum(["text_present", "no_console_errors"]),
+        expected: z.string().optional().describe("Expected text (for 'text_present')."),
+      }).describe("The assertion to verify after the interaction."),
+      waitMs: z.number().optional().default(500).describe("Time to wait (ms) between interaction and validation (default 500ms)."),
+    },
+    async ({ url, interaction, assertion, waitMs }): Promise<ToolResponse> => {
+      try {
+        // 1. Clear previous errors to only catch new ones during/after interaction
+        browserManager.clearConsoleEvents();
+
+        // 2. Interact
+        const interactionResult = await browserManager.simulateInteraction(
+          url,
+          interaction.action,
+          interaction.selector,
+          interaction.value
+        );
+
+        if (!interactionResult.success) {
+          return ok({
+            interaction: interactionResult,
+            validation: {
+              pass: false,
+              assertion,
+              details: "Validation skipped because interaction failed.",
+            },
+          });
+        }
+
+        // 3. Wait for UI to settle
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+
+        // 4. Validate
+        const validationResult = await browserManager.validate(url, assertion);
+
+        return ok({
+          interaction: interactionResult,
+          validation: validationResult,
+        });
+      } catch (e) {
+        return err(`validate_after_action failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
 }
