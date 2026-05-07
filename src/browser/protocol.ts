@@ -6,8 +6,45 @@
 
 /** A request the MCP server sends to the browser runtime. */
 export interface BrowserRequest {
-  type: "ping" | "evaluate";
+  type: "ping" | "evaluate" | "interaction";
   payload?: Record<string, unknown>;
+}
+
+/** Interaction request payload */
+export interface InteractionPayload {
+  action: "click" | "type" | "fill";
+  selector: string;
+  value?: string; // For type/fill actions
+}
+
+/** Interaction result data */
+export interface InteractionData {
+  success: boolean;
+  action: InteractionPayload["action"];
+  selector: string;
+  error?: string;
+}
+
+/** Assertion types */
+export type AssertionType = "text_present" | "no_console_errors";
+
+export interface Assertion {
+  type: AssertionType;
+  expected?: string; // For text_present
+}
+
+/** Validation result */
+export interface ValidationResult {
+  pass: boolean;
+  assertion: Assertion;
+  details?: string;
+  actual?: unknown;
+}
+
+/** Combined interaction and validation response */
+export interface InteractionValidationResponse {
+  interaction: InteractionData;
+  validation?: ValidationResult;
 }
 
 /** Successful browser response. */

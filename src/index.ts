@@ -16,6 +16,7 @@ import type { ToolResponse } from "./types.js";
 import { browserManager } from "./browser/index.js";
 import * as browserTools from "./tools/browser.js";
 import * as diagnosticsTools from "./tools/diagnostics.js";
+import * as interactionTools from "./tools/interaction.js";
 
 // ---------------------------------------------------------------------------
 // Server
@@ -58,7 +59,7 @@ server.tool(
           get_runtime_status: "available",
           runtime_inspection: "planned",
           shadow_sandbox: "planned",
-          interaction_simulation: "planned",
+          interaction_simulation: "available",
         },
       });
     } catch (e) {
@@ -91,6 +92,12 @@ browserTools.register(server);
 // ---------------------------------------------------------------------------
 
 diagnosticsTools.register(server);
+
+// ---------------------------------------------------------------------------
+// Interaction tools (SCRUM-13)
+// ---------------------------------------------------------------------------
+
+interactionTools.register(server);
 
 // ---------------------------------------------------------------------------
 // Bootstrap

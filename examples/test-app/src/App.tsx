@@ -15,7 +15,7 @@ export default function App(): JSX.Element {
       <hr />
       <h2>Interactive fixture</h2>
       <p>Counter state (for future hook inspection tests):</p>
-      <button onClick={() => setCount((c) => c + 1)}>
+      <button id="counter-button" onClick={() => setCount((c) => c + 1)}>
         Count: {count}
       </button>
       <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid red' }}>
