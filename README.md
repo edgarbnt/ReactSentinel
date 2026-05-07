@@ -20,21 +20,68 @@ React-Sentinel bridges AI terminals (Claude, Copilot CLI…) to a live browser r
 - **MCP SDK:** `@modelcontextprotocol/sdk`
 - **Browser automation:** Playwright
 
-## Getting started
+## Prerequisites
+
+- **Node.js ≥ 20** — check with `node --version`
+- **pnpm** — install with `npm install -g pnpm` if needed
+- An MCP-compatible client: [Claude Desktop](https://claude.ai/download) or any terminal that supports MCP stdio transport
+
+## Local setup
+
+### 1. Install dependencies
 
 ```bash
+# From the project root
 pnpm install
-pnpm dev        # run with hot-reload (tsx watch)
 ```
+
+### 2. Start the MCP server (development mode)
+
+```bash
+pnpm dev
+```
+
+The server starts on **stdio transport** — it waits for MCP messages from a connected client.  
+You should see in stderr: `[react-sentinel] MCP server started (stdio transport) ✅`
+
+### 3. Start the test app
+
+Open a second terminal:
+
+```bash
+cd examples/test-app
+pnpm install      # first time only
+pnpm dev          # starts Vite on http://localhost:5173
+```
+
+The test app is a minimal React 18 page used as a live inspection fixture.
+
+### 4. Connect your MCP client
+
+**Claude Desktop** — add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "react-sentinel": {
+      "command": "node",
+      "args": ["--import", "tsx/esm", "/absolute/path/to/ReactSentinel/src/index.ts"]
+    }
+  }
+}
+```
+
+> Restart Claude Desktop after saving the config. The `react-sentinel` tools will appear in the tool list.
 
 ## Available scripts
 
 | Script | Description |
 |---|---|
-| `pnpm dev` | Start server with hot-reload |
+| `pnpm dev` | Start MCP server with hot-reload (`tsx watch`) |
 | `pnpm build` | Compile TypeScript to `dist/` |
-| `pnpm start` | Run compiled server |
+| `pnpm start` | Run compiled server (requires `pnpm build` first) |
 | `pnpm typecheck` | Type-check without emitting |
+| `pnpm check` | Type-check and print a ✅ confirmation |
 
 ## Project structure
 
@@ -47,6 +94,11 @@ src/
 examples/
 └── README.md          # Self-contained demo apps (one per bug class)
 ```
+
+## Testing
+
+See [docs/test-scenario-sprint1.md](docs/test-scenario-sprint1.md) for the full end-to-end test scenario
+(start MCP server → open React app → invoke `get_runtime_status` → verify response).
 
 ## Status
 
