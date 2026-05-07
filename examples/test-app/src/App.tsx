@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { TodoList } from "./components/TodoList";
+import { BuggySearch } from "./components/BuggySearch";
 
 export default function App(): JSX.Element {
   const [count, setCount] = useState(0);
@@ -32,6 +33,7 @@ export default function App(): JSX.Element {
         </button>
       </div>
 
+      <BuggySearch />
       <TodoList />
     </div>
   );
