@@ -39,4 +39,41 @@ export function register(server: McpServer): void {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // Tool: get_react_tree
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_react_tree",
+    [
+      "Extract a simplified representation of the React Fiber tree from a running page.",
+      "Returns a hierarchical JSON tree of components and their props.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      maxDepth: z
+        .number()
+        .int()
+        .min(1)
+        .max(50)
+        .optional()
+        .describe("Maximum depth to traverse in the Fiber tree. Default is 10."),
+      includeHostNodes: z
+        .boolean()
+        .optional()
+        .describe("Include standard HTML elements (HostComponent) in the tree. Default is false."),
+    },
+    async ({ url, maxDepth = 10, includeHostNodes = false }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getReactTree(url, maxDepth, includeHostNodes);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_react_tree failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
 }

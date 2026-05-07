@@ -41,3 +41,20 @@ export interface RuntimeStatus {
   /** How long the full operation took (ms). */
   durationMs: number;
 }
+
+// ---------------------------------------------------------------------------
+// React Tree (SCRUM-5)
+// ---------------------------------------------------------------------------
+
+export interface ReactTreeNode {
+  name: string;
+  props: Record<string, unknown>;
+  children: ReactTreeNode[];
+}
+
+export interface ReactTreeResponse {
+  url: string;
+  tree: ReactTreeNode | null;
+  durationMs: number;
+}
+

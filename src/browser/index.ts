@@ -149,6 +149,59 @@ export class BrowserManager {
       };
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // getReactTree() — SCRUM-5
+  // ---------------------------------------------------------------------------
+
+  async getReactTree(
+    url: string,
+    maxDepth: number = 10,
+    includeHostNodes: boolean = false
+  ): Promise<import("../diagnostics/protocol.js").ReactTreeResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      return await this.withContext(async (context) => {
+        const page = await context.newPage();
+
+        const response = await page.goto(url, {
+          timeout: 10_000,
+          waitUntil: "domcontentloaded",
+        });
+
+        if (!response || !response.ok()) {
+          return {
+            error: `Cannot reach ${url} — HTTP ${response?.status() ?? "no response"}.`,
+          };
+        }
+
+        // Import the extractor dynamically or just rely on evaluate
+        // Note: Playwright serializes the function, so it must not rely on external closure scope.
+        const { extractReactTree } = await import("../diagnostics/react-tree.js");
+        
+        const tree = await page.evaluate(extractReactTree, {
+          maxDepth,
+          includeHostNodes,
+        });
+
+        return {
+          url: await page.evaluate(() => document.URL),
+          tree,
+          durationMs: Date.now() - start,
+        };
+      });
+    } catch (e) {
+      const msg = String(e);
+      const isConnRefused =
+        msg.includes("ECONNREFUSED") || msg.includes("ERR_CONNECTION_REFUSED");
+      return {
+        error: isConnRefused
+          ? `Cannot connect to ${url} — is the app running?`
+          : msg,
+      };
+    }
+  }
 }
 
 /** Singleton shared across all MCP tool calls. */
