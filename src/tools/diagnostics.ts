@@ -76,4 +76,34 @@ export function register(server: McpServer): void {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // Tool: inspect_component
+  // -------------------------------------------------------------------------
+  server.tool(
+    "inspect_component",
+    [
+      "Search the React Fiber tree for a specific component by name and extract",
+      "its full details, including props, path in the tree, and children count.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      componentName: z
+        .string()
+        .min(1)
+        .describe("Name of the React component to inspect (e.g. 'TodoItem')."),
+    },
+    async ({ url, componentName }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.inspectComponent(url, componentName);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`inspect_component failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
 }

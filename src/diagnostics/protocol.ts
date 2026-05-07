@@ -58,3 +58,21 @@ export interface ReactTreeResponse {
   durationMs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Component Inspection (SCRUM-9)
+// ---------------------------------------------------------------------------
+
+export interface ComponentInspectionNode {
+  name: string;
+  props: Record<string, unknown>;
+  path: string[];
+  childrenCount: number;
+}
+
+export interface ComponentInspectionResponse {
+  url: string;
+  componentName: string;
+  found: boolean;
+  component: ComponentInspectionNode | null;
+  durationMs: number;
+}
