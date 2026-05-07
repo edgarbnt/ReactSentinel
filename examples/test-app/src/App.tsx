@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { TodoList } from "./components/TodoList";
 
 export default function App(): JSX.Element {
   const [count, setCount] = useState(0);
@@ -18,8 +17,6 @@ export default function App(): JSX.Element {
       <button onClick={() => setCount((c) => c + 1)}>
         Count: {count}
       </button>
-
-      <TodoList />
     </div>
   );
 }
