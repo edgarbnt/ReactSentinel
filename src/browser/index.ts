@@ -202,6 +202,55 @@ export class BrowserManager {
       };
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // inspectComponent() — SCRUM-9
+  // ---------------------------------------------------------------------------
+
+  async inspectComponent(
+    url: string,
+    componentName: string
+  ): Promise<import("../diagnostics/protocol.js").ComponentInspectionResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      return await this.withContext(async (context) => {
+        const page = await context.newPage();
+
+        const response = await page.goto(url, {
+          timeout: 10_000,
+          waitUntil: "domcontentloaded",
+        });
+
+        if (!response || !response.ok()) {
+          return {
+            error: `Cannot reach ${url} — HTTP ${response?.status() ?? "no response"}.`,
+          };
+        }
+
+        const { inspectReactComponent } = await import("../diagnostics/react-inspector.js");
+        
+        const componentNode = await page.evaluate(inspectReactComponent, componentName);
+
+        return {
+          url: await page.evaluate(() => document.URL),
+          componentName,
+          found: componentNode !== null,
+          component: componentNode,
+          durationMs: Date.now() - start,
+        };
+      });
+    } catch (e) {
+      const msg = String(e);
+      const isConnRefused =
+        msg.includes("ECONNREFUSED") || msg.includes("ERR_CONNECTION_REFUSED");
+      return {
+        error: isConnRefused
+          ? `Cannot connect to ${url} — is the app running?`
+          : msg,
+      };
+    }
+  }
 }
 
 /** Singleton shared across all MCP tool calls. */
