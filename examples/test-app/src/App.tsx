@@ -18,6 +18,19 @@ export default function App(): JSX.Element {
       <button onClick={() => setCount((c) => c + 1)}>
         Count: {count}
       </button>
+      <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid red' }}>
+        <h3>SCRUM-8 Crash Test</h3>
+        <button 
+          id="crash-button"
+          onClick={() => {
+            console.error("This is a simulated console.error");
+            throw new Error("This is a simulated crash!");
+          }}
+          style={{ backgroundColor: 'darkred', color: 'white' }}
+        >
+          Générer une erreur
+        </button>
+      </div>
 
       <TodoList />
     </div>

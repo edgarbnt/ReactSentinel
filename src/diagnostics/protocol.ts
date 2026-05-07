@@ -1,9 +1,9 @@
 /**
- * diagnostics/protocol.ts — SCRUM-24
- *
- * Type definitions for all runtime diagnostic responses.
- * Designed to be extensible for future inspection commands (fiber, network…).
- */
+* diagnostics/protocol.ts — SCRUM-24
+*
+* Type definitions for all runtime diagnostic responses.
+* Designed to be extensible for future inspection commands (fiber, network…).
+*/
 
 // ---------------------------------------------------------------------------
 // React detection (SCRUM-26)
@@ -76,3 +76,17 @@ export interface ComponentInspectionResponse {
   component: ComponentInspectionNode | null;
   durationMs: number;
 }
+
+export interface ConsoleEvent {
+  type: "log" | "warn" | "error" | "exception";
+  text: string;
+  location?: string;
+  timestamp: string;
+}
+
+export interface ConsoleEventsResponse {
+  url: string;
+  events: ConsoleEvent[];
+  durationMs: number;
+}
+
