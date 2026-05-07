@@ -106,4 +106,30 @@ export function register(server: McpServer): void {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // Tool: get_console_events
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_console_events",
+    [
+      "Retrieve console events (logs, warnings, errors) and unhandled JavaScript",
+      "exceptions that have occurred on the page since it was loaded.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+    },
+    async ({ url }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getConsoleEvents(url);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_console_events failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
 }
