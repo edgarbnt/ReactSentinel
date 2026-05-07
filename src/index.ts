@@ -15,6 +15,7 @@ import { ok, err } from "./types.js";
 import type { ToolResponse } from "./types.js";
 import { browserManager } from "./browser/index.js";
 import * as browserTools from "./tools/browser.js";
+import * as diagnosticsTools from "./tools/diagnostics.js";
 
 // ---------------------------------------------------------------------------
 // Server
@@ -54,6 +55,7 @@ server.tool(
         transport: "stdio",
         capabilities: {
           browser_ping: "available",
+          get_runtime_status: "available",
           runtime_inspection: "planned",
           shadow_sandbox: "planned",
           interaction_simulation: "planned",
@@ -83,6 +85,12 @@ server.tool(
 // ---------------------------------------------------------------------------
 
 browserTools.register(server);
+
+// ---------------------------------------------------------------------------
+// Diagnostics tools (SCRUM-7)
+// ---------------------------------------------------------------------------
+
+diagnosticsTools.register(server);
 
 // ---------------------------------------------------------------------------
 // Bootstrap

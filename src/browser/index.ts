@@ -1,18 +1,19 @@
 /**
- * browser/index.ts — SCRUM-23 + SCRUM-20
+ * browser/index.ts — SCRUM-23 + SCRUM-20 + SCRUM-28
  *
  * BrowserManager: wraps Playwright to provide isolated browser contexts
  * for each MCP tool call. Auto-launches on first use.
  *
  * Rules enforced:
- *   - Each ping() creates a new isolated BrowserContext, closed in finally.
- *   - Navigation errors (ECONNREFUSED, timeout) return structured BrowserError.
- *   - Never throws — all errors are returned as BrowserResult.
+ *   - Each tool call creates a new isolated BrowserContext, closed in finally.
+ *   - Navigation errors (ECONNREFUSED, timeout) return structured errors.
  */
 
 import { chromium } from "playwright";
 import type { Browser, BrowserContext } from "playwright";
 import type { BrowserResult, PingData } from "./protocol.js";
+import type { RuntimeStatus } from "../diagnostics/protocol.js";
+import { detectReact } from "../diagnostics/react-detector.js";
 
 export class BrowserManager {
   private browser: Browser | null = null;
@@ -33,6 +34,20 @@ export class BrowserManager {
     }
   }
 
+  private async withContext<T>(
+    fn: (context: BrowserContext) => Promise<T>
+  ): Promise<T> {
+    if (!this.browser) await this.launch();
+
+    let context: BrowserContext | null = null;
+    try {
+      context = await this.browser!.newContext();
+      return await fn(context);
+    } finally {
+      if (context) await context.close();
+    }
+  }
+
   /**
    * Ping a URL — opens an isolated context, navigates, extracts metadata.
    * Handles SCRUM-20: returns structured error when app is unreachable.
@@ -41,59 +56,33 @@ export class BrowserManager {
     const start = Date.now();
     const type = "ping" as const;
 
-    // Auto-launch on first use
-    if (!this.browser) {
-      try {
-        await this.launch();
-      } catch (e) {
-        return {
-          success: false,
-          type,
-          error: `Failed to launch browser: ${String(e)}`,
-          durationMs: Date.now() - start,
-        };
-      }
-    }
-
-    // Rule: one isolated context per tool call, closed in finally
-    let context: BrowserContext | null = null;
     try {
-      context = await this.browser!.newContext();
-      const page = await context.newPage();
+      return await this.withContext(async (context) => {
+        const page = await context.newPage();
+        const response = await page.goto(url, {
+          timeout: 10_000,
+          waitUntil: "domcontentloaded",
+        });
 
-      const response = await page.goto(url, {
-        timeout: 10_000,
-        waitUntil: "domcontentloaded",
+        if (!response || !response.ok()) {
+          return {
+            success: false,
+            type,
+            error: `Navigation to ${url} returned HTTP ${response?.status() ?? "no response"}.`,
+            durationMs: Date.now() - start,
+          };
+        }
+
+        const data = await page.evaluate<PingData>(() => ({
+          pong: true,
+          url: document.URL,
+          title: document.title,
+          timestamp: new Date().toISOString(),
+        }));
+
+        return { success: true, type, data, durationMs: Date.now() - start };
       });
-
-      if (!response) {
-        return {
-          success: false,
-          type,
-          error: `Navigation to ${url} returned no response.`,
-          durationMs: Date.now() - start,
-        };
-      }
-
-      if (!response.ok()) {
-        return {
-          success: false,
-          type,
-          error: `Navigation to ${url} returned HTTP ${response.status()}.`,
-          durationMs: Date.now() - start,
-        };
-      }
-
-      const data = await page.evaluate<PingData>(() => ({
-        pong: true,
-        url: document.URL,
-        title: document.title,
-        timestamp: new Date().toISOString(),
-      }));
-
-      return { success: true, type, data, durationMs: Date.now() - start };
     } catch (e) {
-      // SCRUM-20: friendly error for connection refused / timeout
       const msg = String(e);
       const isConnRefused =
         msg.includes("ECONNREFUSED") || msg.includes("ERR_CONNECTION_REFUSED");
@@ -105,9 +94,59 @@ export class BrowserManager {
           : msg,
         durationMs: Date.now() - start,
       };
-    } finally {
-      // Rule: always close browser contexts in a finally block
-      if (context) await context.close();
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRuntimeStatus() — SCRUM-28
+  // ---------------------------------------------------------------------------
+
+  async getRuntimeStatus(url: string): Promise<RuntimeStatus | { error: string }> {
+    const start = Date.now();
+
+    try {
+      return await this.withContext(async (context) => {
+        const page = await context.newPage();
+
+        const response = await page.goto(url, {
+          timeout: 10_000,
+          waitUntil: "domcontentloaded",
+        });
+
+        if (!response || !response.ok()) {
+          return {
+            error: `Cannot reach ${url} — HTTP ${response?.status() ?? "no response"}.`,
+          };
+        }
+
+        const [pageUrl, title, viewport, react] = await Promise.all([
+          page.evaluate<string>(() => document.URL),
+          page.evaluate<string>(() => document.title),
+          page.evaluate<{ width: number; height: number }>(() => ({
+            width: window.innerWidth,
+            height: window.innerHeight,
+          })),
+          page.evaluate(detectReact),
+        ]);
+
+        return {
+          url: pageUrl,
+          title,
+          timestamp: new Date().toISOString(),
+          viewport,
+          react,
+          durationMs: Date.now() - start,
+        };
+      });
+    } catch (e) {
+      const msg = String(e);
+      const isConnRefused =
+        msg.includes("ECONNREFUSED") || msg.includes("ERR_CONNECTION_REFUSED");
+      return {
+        error: isConnRefused
+          ? `Cannot connect to ${url} — is the app running?`
+          : msg,
+      };
     }
   }
 }

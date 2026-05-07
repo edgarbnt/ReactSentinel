@@ -38,3 +38,12 @@ Migration et Refactoring de sécurité
 Lors du changement d'une bibliothèque de gestion d'état (ex: passer de Redux à Zustand), l'IA peut migrer les composants un par un et utiliser la sandbox pour vérifier que chaque composant migré conserve un état identique à la version originale en comparant les instantanés de la mémoire (snapshots) fournis par l'outil.
 
 En résumé, l'outil transforme le débogage par IA d'un processus de "devinette" basé sur la lecture de code en un processus scientifique basé sur l'observation des faits et la validation expérimentale.
+
+4. Stratégie de Connexion au Navigateur (Le Mur Conceptuel)
+Pour que le débogage soit réellement utile, l'IA doit pouvoir inspecter l'application dans son "état bugué" (ex: après avoir rempli un formulaire). Pour y parvenir, React-Sentinel adopte une stratégie hybride à deux niveaux :
+
+Priorité 1 : L'approche "Attach" (Idéale & Puissante)
+Le serveur MCP tente d'abord de se connecter au navigateur de développement de l'utilisateur (via le protocole CDP, par exemple sur le port 9222 de Chrome). Cela permet à l'IA d'inspecter exactement l'onglet que le développeur regarde, avec son état complexe et sa session active.
+
+Priorité 2 : L'approche "Replay" (Fallback & Sandboxing)
+Si la connexion "Attach" échoue ou si le développeur refuse l'accès, l'outil bascule sur une instance isolée "headless" (Playwright). Dans ce mode de "Shadow Sandbox", l'IA peut naviguer vers l'URL depuis un état vierge et simuler les interactions nécessaires pour reproduire le bug avant de l'inspecter.
