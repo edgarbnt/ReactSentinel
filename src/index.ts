@@ -16,6 +16,7 @@ import type { ToolResponse } from "./types.js";
 import { browserManager } from "./browser/index.js";
 import * as browserTools from "./tools/browser.js";
 import * as diagnosticsTools from "./tools/diagnostics.js";
+import * as networkTools from "./tools/network.js";
 import * as interactionTools from "./tools/interaction.js";
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ server.tool(
         capabilities: {
           browser_ping: "available",
           get_runtime_status: "available",
+          get_network_events: "available",
           runtime_inspection: "planned",
           shadow_sandbox: "planned",
           interaction_simulation: "available",
@@ -92,6 +94,12 @@ browserTools.register(server);
 // ---------------------------------------------------------------------------
 
 diagnosticsTools.register(server);
+
+// ---------------------------------------------------------------------------
+// Network tools (SCRUM-102)
+// ---------------------------------------------------------------------------
+
+networkTools.register(server);
 
 // ---------------------------------------------------------------------------
 // Interaction tools (SCRUM-13)

@@ -41,6 +41,33 @@ export interface ValidationResult {
   actual?: unknown;
 }
 
+/** A captured network event from fetch or XMLHttpRequest. */
+export interface NetworkEvent {
+  type: "fetch" | "xhr";
+  url: string;
+  method: string;
+  status: number | null;
+  durationMs: number;
+  timestamp: string;
+  error?: string;
+  isHttpError: boolean;
+}
+
+/** Summary of network events returned to the MCP layer. */
+export interface NetworkEventsSummary {
+  total: number;
+  httpErrorCount: number;
+  statusCounts: Record<string, number>;
+  urls: string[];
+}
+
+export interface NetworkEventsResponse {
+  url: string;
+  events: NetworkEvent[];
+  summary: NetworkEventsSummary;
+  durationMs: number;
+}
+
 /** Combined interaction and validation response */
 export interface InteractionValidationResponse {
   interaction: InteractionData;

@@ -12,7 +12,12 @@
 
 import { chromium } from "playwright";
 import type { Browser, BrowserContext, Page, ConsoleMessage } from "playwright";
-import type { BrowserResult, PingData } from "./protocol.js";
+import type {
+  BrowserResult,
+  PingData,
+  NetworkEvent,
+  NetworkEventsResponse,
+} from "./protocol.js";
 import type { RuntimeStatus, ConsoleEvent, ConsoleEventsResponse } from "../diagnostics/protocol.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 
@@ -38,15 +43,7 @@ export class BrowserManager {
         networkBufferGlobalKey: string;
         networkBufferLimit: number;
       }) => {
-        type NetworkEventSeed = {
-          type: "fetch" | "xhr";
-          url: string;
-          method: string;
-          status: number | null;
-          durationMs: number;
-          timestamp: string;
-          error?: string;
-        };
+        type NetworkEventSeed = Omit<NetworkEvent, "isHttpError">;
 
         const windowWithNetwork = window as typeof window & {
           fetch: typeof fetch;
@@ -379,6 +376,64 @@ export class BrowserManager {
       return {
         url: await page.evaluate(() => document.URL),
         events,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleError(e, url);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getNetworkEvents() — SCRUM-102
+  // ---------------------------------------------------------------------------
+  async getNetworkEvents(
+    url: string,
+    onlyErrors: boolean = false,
+    limit: number = 100
+  ): Promise<NetworkEventsResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getPage(url);
+
+      const rawEvents = await page.evaluate((globalKey) => {
+        const windowWithNetwork = window as typeof window & {
+          [key: string]: unknown;
+        };
+        const current = Reflect.get(windowWithNetwork, globalKey);
+        return Array.isArray(current) ? current : [];
+      }, BrowserManager.networkBufferGlobalKey);
+
+      const events = rawEvents
+        .map((event) => {
+          const seed = event as Omit<NetworkEvent, "isHttpError">;
+          const isHttpError = typeof seed.status === "number" && seed.status >= 400;
+
+          return {
+            ...seed,
+            isHttpError,
+          } satisfies NetworkEvent;
+        })
+        .filter((event) => (onlyErrors ? event.isHttpError || Boolean(event.error) : true))
+        .slice(-limit);
+
+      const statusCounts = events.reduce<Record<string, number>>((acc, event) => {
+        const statusKey = event.status === null ? "no-status" : String(event.status);
+        acc[statusKey] = (acc[statusKey] ?? 0) + 1;
+        return acc;
+      }, {});
+
+      const summary = {
+        total: events.length,
+        httpErrorCount: events.filter((event) => event.isHttpError || Boolean(event.error)).length,
+        statusCounts,
+        urls: [...new Set(events.map((event) => event.url))],
+      };
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        events,
+        summary,
         durationMs: Date.now() - start,
       };
     } catch (e) {
