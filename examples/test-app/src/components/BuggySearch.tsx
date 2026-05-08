@@ -11,7 +11,7 @@ export function BuggySearch() {
   return (
     <div style={{ marginTop: "1rem", padding: "1rem", border: "1px solid orange" }}>
       <h3>SCRUM-54 Buggy Search</h3>
-      <p>Typing 'bug' will crash the component.</p>
+      <p>Typing 'bug' used to crash the component (now fixed).</p>
       <input
         id="buggy-input"
         type="text"

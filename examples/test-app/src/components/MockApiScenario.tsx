@@ -17,10 +17,12 @@ async function runMockRequest(path: string): Promise<RequestState> {
 export function MockApiScenario(): JSX.Element {
   const [successState, setSuccessState] = useState<RequestState | null>(null);
   const [errorState, setErrorState] = useState<RequestState | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"success" | "error" | null>(null);
 
   const handleRun = async (kind: "success" | "error"): Promise<void> => {
     setBusy(kind);
+    setFetchError(null);
     try {
       const path = kind === "success" ? "/api/mock/success" : "/api/mock/error";
       const result = await runMockRequest(path);
@@ -29,6 +31,8 @@ export function MockApiScenario(): JSX.Element {
       } else {
         setErrorState(result);
       }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
@@ -61,6 +65,11 @@ export function MockApiScenario(): JSX.Element {
         <div id="mock-error-result">
           Error: {errorState ? `${errorState.status} — ${errorState.detail}` : "idle"}
         </div>
+        {fetchError && (
+          <div id="mock-fetch-error" style={{ color: "red", marginTop: "0.25rem" }}>
+            Fetch failed: {fetchError}
+          </div>
+        )}
       </div>
     </div>
   );
