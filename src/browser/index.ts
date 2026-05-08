@@ -22,12 +22,149 @@ export class BrowserManager {
   private page: Page | null = null;
 
   private consoleEvents: ConsoleEvent[] = [];
+  private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
+  private static readonly networkBufferLimit = 200;
 
   /** Launch a headless Chromium instance (idempotent). */
   async launch(): Promise<void> {
     if (this.browser) return;
     this.browser = await chromium.launch({ headless: true });
     this.context = await this.browser.newContext();
+    await this.context.addInitScript(
+      ({
+        networkBufferGlobalKey,
+        networkBufferLimit,
+      }: {
+        networkBufferGlobalKey: string;
+        networkBufferLimit: number;
+      }) => {
+        type NetworkEventSeed = {
+          type: "fetch" | "xhr";
+          url: string;
+          method: string;
+          status: number | null;
+          durationMs: number;
+          timestamp: string;
+          error?: string;
+        };
+
+        const windowWithNetwork = window as typeof window & {
+          fetch: typeof fetch;
+        };
+        const getBuffer = (): NetworkEventSeed[] => {
+          const current = Reflect.get(windowWithNetwork, networkBufferGlobalKey);
+          if (Array.isArray(current)) {
+            return current as NetworkEventSeed[];
+          }
+          const emptyBuffer: NetworkEventSeed[] = [];
+          Reflect.set(windowWithNetwork, networkBufferGlobalKey, emptyBuffer);
+          return emptyBuffer;
+        };
+        const pushEvent = (event: NetworkEventSeed): void => {
+          const buffer = getBuffer();
+          buffer.push(event);
+          if (buffer.length > networkBufferLimit) {
+            buffer.splice(0, buffer.length - networkBufferLimit);
+          }
+        };
+
+        const originalFetch = windowWithNetwork.fetch.bind(windowWithNetwork);
+        const originalXhrOpen = XMLHttpRequest.prototype.open;
+        const originalXhrSend = XMLHttpRequest.prototype.send;
+
+        windowWithNetwork.fetch = async (
+          input: RequestInfo | URL,
+          init?: RequestInit
+        ): Promise<Response> => {
+          const startedAt = Date.now();
+          const requestUrl =
+            typeof input === "string"
+              ? input
+              : input instanceof URL
+                ? input.toString()
+                : input.url;
+
+          const requestMethod = init?.method ?? "GET";
+          const normalizedMethod = requestMethod.toUpperCase();
+
+          try {
+            const response = await originalFetch(input, init);
+            pushEvent({
+              type: "fetch",
+              url: requestUrl,
+              method: normalizedMethod,
+              status: response.status,
+              durationMs: Date.now() - startedAt,
+              timestamp: new Date().toISOString(),
+            });
+            return response;
+          } catch (error) {
+            pushEvent({
+              type: "fetch",
+              url: requestUrl,
+              method: normalizedMethod,
+              status: null,
+              durationMs: Date.now() - startedAt,
+              timestamp: new Date().toISOString(),
+              error: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        };
+
+        XMLHttpRequest.prototype.open = function (
+          this: XMLHttpRequest,
+          method: string,
+          url: string | URL,
+          async?: boolean,
+          username?: string | null,
+          password?: string | null
+        ): void {
+          Reflect.set(this, "__rsMethod", method.toUpperCase());
+          Reflect.set(this, "__rsUrl", typeof url === "string" ? url : url.toString());
+
+          originalXhrOpen.call(this, method, url, async ?? true, username ?? null, password ?? null);
+        };
+
+        XMLHttpRequest.prototype.send = function (
+          this: XMLHttpRequest,
+          body?: XMLHttpRequestBodyInit | Document | null
+        ): void {
+          this.addEventListener(
+            "loadend",
+            () => {
+              const method = Reflect.get(this, "__rsMethod");
+              const url = Reflect.get(this, "__rsUrl");
+              const startedAt = Reflect.get(this, "__rsStartedAt");
+              const isStartedAtNumber = typeof startedAt === "number";
+              const durationMs = isStartedAtNumber ? Date.now() - startedAt : 0;
+
+              if (typeof method === "string" && typeof url === "string") {
+                const status = Number.isFinite(this.status) ? this.status : null;
+                const hasNetworkFailure = status === 0;
+                pushEvent({
+                  type: "xhr",
+                  method,
+                  url,
+                  status,
+                  durationMs,
+                  timestamp: new Date().toISOString(),
+                  ...(hasNetworkFailure ? { error: "XMLHttpRequest failed" } : {}),
+                });
+              }
+            },
+            { once: true }
+          );
+
+          Reflect.set(this, "__rsStartedAt", Date.now());
+          originalXhrSend.call(this, body);
+        };
+      },
+      {
+        networkBufferGlobalKey: BrowserManager.networkBufferGlobalKey,
+        networkBufferLimit: BrowserManager.networkBufferLimit,
+      }
+    );
     this.page = await this.context.newPage();
 
     this.setupListeners();
