@@ -18,7 +18,16 @@ import type {
   NetworkEvent,
   NetworkEventsResponse,
 } from "./protocol.js";
-import type { RuntimeStatus, ConsoleEvent, ConsoleEventsResponse } from "../diagnostics/protocol.js";
+import type {
+  RuntimeStatus,
+  ConsoleEvent,
+  ConsoleEventsResponse,
+  RuntimeTimelineEvent,
+  RuntimeTimelineLevel,
+  RuntimeTimelineResponse,
+  RuntimeTimelineSource,
+  RuntimeTimelineSummary,
+} from "../diagnostics/protocol.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 
 export class BrowserManager {
@@ -29,6 +38,11 @@ export class BrowserManager {
   private consoleEvents: ConsoleEvent[] = [];
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
   private static readonly networkBufferLimit = 200;
+  private static readonly timelineSourceOrder: Record<RuntimeTimelineSource, number> = {
+    console: 0,
+    exception: 1,
+    network: 2,
+  };
 
   /** Launch a headless Chromium instance (idempotent). */
   async launch(): Promise<void> {
@@ -383,6 +397,27 @@ export class BrowserManager {
     }
   }
 
+  private async readNetworkEvents(url: string): Promise<NetworkEvent[] | { error: string }> {
+    const page = await this.getPage(url);
+
+    const rawEvents = await page.evaluate((globalKey) => {
+      const windowWithNetwork = window as typeof window & {
+        [key: string]: unknown;
+      };
+      const current = Reflect.get(windowWithNetwork, globalKey);
+      return Array.isArray(current) ? current : [];
+    }, BrowserManager.networkBufferGlobalKey);
+
+    return rawEvents.map((event) => {
+      const seed = event as Omit<NetworkEvent, "isHttpError">;
+      const isHttpError = typeof seed.status === "number" && seed.status >= 400;
+      return {
+        ...seed,
+        isHttpError,
+      };
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // getNetworkEvents() — SCRUM-102
   // ---------------------------------------------------------------------------
@@ -395,25 +430,10 @@ export class BrowserManager {
 
     try {
       const page = await this.getPage(url);
+      const eventsOrError = await this.readNetworkEvents(url);
+      if ("error" in eventsOrError) return eventsOrError;
 
-      const rawEvents = await page.evaluate((globalKey) => {
-        const windowWithNetwork = window as typeof window & {
-          [key: string]: unknown;
-        };
-        const current = Reflect.get(windowWithNetwork, globalKey);
-        return Array.isArray(current) ? current : [];
-      }, BrowserManager.networkBufferGlobalKey);
-
-      const events = rawEvents
-        .map((event) => {
-          const seed = event as Omit<NetworkEvent, "isHttpError">;
-          const isHttpError = typeof seed.status === "number" && seed.status >= 400;
-
-          return {
-            ...seed,
-            isHttpError,
-          } satisfies NetworkEvent;
-        })
+      const events = eventsOrError
         .filter((event) => (onlyErrors ? event.isHttpError || Boolean(event.error) : true))
         .slice(-limit);
 
@@ -429,6 +449,92 @@ export class BrowserManager {
         statusCounts,
         urls: [...new Set(events.map((event) => event.url))],
       };
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        events,
+        summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleError(e, url);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRuntimeTimeline() — SCRUM-97
+  // ---------------------------------------------------------------------------
+  async getRuntimeTimeline(url: string): Promise<RuntimeTimelineResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getPage(url);
+      const networkOrError = await this.readNetworkEvents(url);
+      if ("error" in networkOrError) return networkOrError;
+
+      const consoleTimeline = this.consoleEvents.map((event, index): RuntimeTimelineEvent => {
+        const source: RuntimeTimelineSource = event.type === "exception" ? "exception" : "console";
+        const level: RuntimeTimelineLevel =
+          event.type === "warn"
+            ? "warn"
+            : event.type === "error"
+              ? "error"
+              : event.type === "exception"
+                ? "exception"
+                : "log";
+
+        return {
+          source,
+          level,
+          message: event.text,
+          timestamp: event.timestamp,
+          sequence: index,
+          payload: event.location ? { location: event.location } : undefined,
+        };
+      });
+
+      const networkTimeline = networkOrError.map((event, index): RuntimeTimelineEvent => ({
+        source: "network",
+        level: event.isHttpError || Boolean(event.error) ? "error" : "info",
+        message: `${event.method} ${event.url}${event.status === null ? "" : ` -> ${event.status}`}`,
+        timestamp: event.timestamp,
+        sequence: index,
+        payload: {
+          type: event.type,
+          url: event.url,
+          method: event.method,
+          status: event.status,
+          durationMs: event.durationMs,
+          error: event.error ?? null,
+          isHttpError: event.isHttpError,
+        },
+      }));
+
+      const events = [...consoleTimeline, ...networkTimeline].sort((a, b) => {
+        const byTimestamp = a.timestamp.localeCompare(b.timestamp);
+        if (byTimestamp !== 0) return byTimestamp;
+        const bySource = BrowserManager.timelineSourceOrder[a.source] - BrowserManager.timelineSourceOrder[b.source];
+        if (bySource !== 0) return bySource;
+        return a.sequence - b.sequence;
+      });
+
+      const summary = events.reduce<RuntimeTimelineSummary>(
+        (acc, event) => {
+          acc.total += 1;
+          acc.bySource[event.source] += 1;
+          acc.byLevel[event.level] += 1;
+          if (event.level === "error" || event.level === "exception") {
+            acc.errorCount += 1;
+          }
+          return acc;
+        },
+        {
+          total: 0,
+          bySource: { console: 0, exception: 0, network: 0 },
+          byLevel: { log: 0, warn: 0, error: 0, exception: 0, info: 0 },
+          errorCount: 0,
+        }
+      );
 
       return {
         url: await page.evaluate(() => document.URL),

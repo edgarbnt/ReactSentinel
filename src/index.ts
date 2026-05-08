@@ -59,6 +59,7 @@ server.tool(
           browser_ping: "available",
           get_runtime_status: "available",
           get_network_events: "available",
+          get_runtime_timeline: "available",
           runtime_inspection: "planned",
           shadow_sandbox: "planned",
           interaction_simulation: "available",

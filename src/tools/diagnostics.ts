@@ -132,4 +132,31 @@ export function register(server: McpServer): void {
       }
     }
   );
+
+  // -------------------------------------------------------------------------
+  // Tool: get_runtime_timeline
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_runtime_timeline",
+    [
+      "Return a unified runtime timeline that merges console logs, exceptions,",
+      "and network events into a single chronologically sorted stream.",
+      "Useful for debugging the exact sequence of a bug.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+    },
+    async ({ url }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getRuntimeTimeline(url);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_runtime_timeline failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
 }
