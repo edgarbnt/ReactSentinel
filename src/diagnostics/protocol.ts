@@ -90,3 +90,33 @@ export interface ConsoleEventsResponse {
   durationMs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Runtime timeline (S4-03)
+// ---------------------------------------------------------------------------
+
+export type RuntimeTimelineSource = "console" | "exception" | "network";
+
+export type RuntimeTimelineLevel = "log" | "warn" | "error" | "exception" | "info";
+
+export interface RuntimeTimelineEvent {
+  source: RuntimeTimelineSource;
+  level: RuntimeTimelineLevel;
+  message: string;
+  timestamp: string;
+  sequence: number;
+  payload?: Record<string, unknown>;
+}
+
+export interface RuntimeTimelineSummary {
+  total: number;
+  bySource: Record<RuntimeTimelineSource, number>;
+  byLevel: Record<RuntimeTimelineLevel, number>;
+  errorCount: number;
+}
+
+export interface RuntimeTimelineResponse {
+  url: string;
+  events: RuntimeTimelineEvent[];
+  summary: RuntimeTimelineSummary;
+  durationMs: number;
+}
