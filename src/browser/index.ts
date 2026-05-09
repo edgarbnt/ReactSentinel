@@ -204,6 +204,7 @@ export class BrowserManager {
   private static readonly runtimeBridgeInstalledGlobalKey = "__RS_RUNTIME_BRIDGE_INSTALLED__";
   private static readonly runtimePatchStateGlobalKey = "__RS_RUNTIME_PATCH_STATE__";
   private static readonly maxRuntimePatchSourceLength = 20_000;
+  private static readonly reservedRuntimePatchIds = new Set(["__proto__", "prototype", "constructor"]);
   private static readonly timelineSourceOrder: Record<RuntimeTimelineSource, number> = {
     console: 0,
     exception: 1,
@@ -329,6 +330,11 @@ export class BrowserManager {
       rawId && rawId.length > 0
         ? rawId
         : `patch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    if (BrowserManager.reservedRuntimePatchIds.has(id)) {
+      return {
+        error: `Runtime patch id "${id}" is reserved. Please use a different metadata.id value.`,
+      };
+    }
     const label = patch.metadata.label?.trim();
 
     return {
@@ -347,18 +353,37 @@ export class BrowserManager {
       const patch = ${JSON.stringify(patch)};
       const globalKey = ${JSON.stringify(BrowserManager.runtimePatchStateGlobalKey)};
       const windowWithState = window;
+      const createActiveRegistry = (value) => {
+        const registry = Object.create(null);
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          for (const key of Object.keys(value)) {
+            registry[key] = value[key];
+          }
+        }
+        return registry;
+      };
       const ensureState = () => {
         const existing = Reflect.get(windowWithState, globalKey);
         if (existing && typeof existing === "object" && !Array.isArray(existing)) {
-          if (!existing.active || typeof existing.active !== "object") {
-            existing.active = {};
+          const activeValue = existing.active;
+          const activePrototype =
+            activeValue && typeof activeValue === "object" ? Object.getPrototypeOf(activeValue) : null;
+          if (
+            !activeValue ||
+            typeof activeValue !== "object" ||
+            Array.isArray(activeValue) ||
+            (activePrototype !== null && activePrototype !== Object.prototype)
+          ) {
+            existing.active = createActiveRegistry(activeValue);
+          } else if (activePrototype === Object.prototype) {
+            existing.active = createActiveRegistry(activeValue);
           }
           if (!Array.isArray(existing.errors)) {
             existing.errors = [];
           }
           return existing;
         }
-        const initialState = { active: {}, errors: [] };
+        const initialState = { active: createActiveRegistry(null), errors: [] };
         Reflect.set(windowWithState, globalKey, initialState);
         return initialState;
       };
@@ -377,7 +402,7 @@ export class BrowserManager {
         }
       };
       const state = ensureState();
-      if (state.active[patch.metadata.id]) {
+      if (Object.prototype.hasOwnProperty.call(state.active, patch.metadata.id)) {
         return {
           status: "already_applied",
           result: state.active[patch.metadata.id].result ?? null,
