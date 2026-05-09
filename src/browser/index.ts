@@ -1635,20 +1635,22 @@ export class BrowserManager {
 
             const currentUrl = page.url();
             const targetUrl = options?.reopenUrl ?? currentUrl;
-            if (targetUrl && targetUrl !== "about:blank") {
-              if (targetUrl === currentUrl) {
-                await page.reload({
-                  timeout: timeoutMs,
-                  waitUntil,
-                });
-                await this.ensureRuntimeBridgeOnPage(page);
-              } else {
-                await this.navigatePage(page, targetUrl, waitUntil, timeoutMs);
-              }
-              reopenedUrl = page.url();
+            if (targetUrl && targetUrl !== currentUrl) {
+              await this.navigatePage(page, targetUrl, waitUntil, timeoutMs);
+            } else if (targetUrl) {
+              await page.reload({
+                timeout: timeoutMs,
+                waitUntil,
+              });
+              await this.ensureRuntimeBridgeOnPage(page);
             } else {
-              reopenedUrl = currentUrl;
+              await page.goto("about:blank", {
+                timeout: timeoutMs,
+                waitUntil,
+              });
+              await this.ensureRuntimeBridgeOnPage(page);
             }
+            reopenedUrl = page.url();
 
             this.consoleEvents = [];
             await this.clearNetworkEventsBuffer(page).catch(() => 0);
