@@ -39,15 +39,28 @@ import { detectReact } from "../diagnostics/react-detector.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
 
+type RuntimeBridgeInitArgs = {
+  networkBufferGlobalKey: string;
+  networkBufferLimit: number;
+  runtimeBridgeInstalledGlobalKey: string;
+};
+
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private attachedBrowser: Browser | null = null;
+  private attachedPage: Page | null = null;
+  private attachedEndpoint: string | null = null;
+  private attachedTargetId: string | null = null;
   private attachSelection: { endpoint: string; tab: AttachTabInfo; selectedAt: string } | null = null;
 
   private consoleEvents: ConsoleEvent[] = [];
+  private runtimeEventPage: Page | null = null;
+  private readonly observedPages = new WeakSet<Page>();
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
   private static readonly networkBufferLimit = 200;
+  private static readonly runtimeBridgeInstalledGlobalKey = "__RS_RUNTIME_BRIDGE_INSTALLED__";
   private static readonly timelineSourceOrder: Record<RuntimeTimelineSource, number> = {
     console: 0,
     exception: 1,
@@ -72,6 +85,143 @@ export class BrowserManager {
         index,
       }));
   }
+
+  private static getRuntimeBridgeArgs(): RuntimeBridgeInitArgs {
+    return {
+      networkBufferGlobalKey: BrowserManager.networkBufferGlobalKey,
+      networkBufferLimit: BrowserManager.networkBufferLimit,
+      runtimeBridgeInstalledGlobalKey: BrowserManager.runtimeBridgeInstalledGlobalKey,
+    };
+  }
+
+  private static readonly installRuntimeBridgeScript = ({
+    networkBufferGlobalKey,
+    networkBufferLimit,
+    runtimeBridgeInstalledGlobalKey,
+  }: RuntimeBridgeInitArgs): void => {
+    type NetworkEventSeed = Omit<NetworkEvent, "isHttpError">;
+
+    const windowWithNetwork = window as typeof window & {
+      fetch: typeof fetch;
+      [key: string]: unknown;
+    };
+
+    if (Reflect.get(windowWithNetwork, runtimeBridgeInstalledGlobalKey) === true) {
+      return;
+    }
+
+    Reflect.set(windowWithNetwork, runtimeBridgeInstalledGlobalKey, true);
+
+    const getBuffer = (): NetworkEventSeed[] => {
+      const current = Reflect.get(windowWithNetwork, networkBufferGlobalKey);
+      if (Array.isArray(current)) {
+        return current as NetworkEventSeed[];
+      }
+      const emptyBuffer: NetworkEventSeed[] = [];
+      Reflect.set(windowWithNetwork, networkBufferGlobalKey, emptyBuffer);
+      return emptyBuffer;
+    };
+
+    const pushEvent = (event: NetworkEventSeed): void => {
+      const buffer = getBuffer();
+      buffer.push(event);
+      if (buffer.length > networkBufferLimit) {
+        buffer.splice(0, buffer.length - networkBufferLimit);
+      }
+    };
+
+    const originalFetch = windowWithNetwork.fetch.bind(windowWithNetwork);
+    const originalXhrOpen = XMLHttpRequest.prototype.open;
+    const originalXhrSend = XMLHttpRequest.prototype.send;
+
+    windowWithNetwork.fetch = async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ): Promise<Response> => {
+      const startedAt = Date.now();
+      const requestUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      const requestMethod = init?.method ?? "GET";
+      const normalizedMethod = requestMethod.toUpperCase();
+
+      try {
+        const response = await originalFetch(input, init);
+        pushEvent({
+          type: "fetch",
+          url: requestUrl,
+          method: normalizedMethod,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          timestamp: new Date().toISOString(),
+        });
+        return response;
+      } catch (error) {
+        pushEvent({
+          type: "fetch",
+          url: requestUrl,
+          method: normalizedMethod,
+          status: null,
+          durationMs: Date.now() - startedAt,
+          timestamp: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+
+    XMLHttpRequest.prototype.open = function (
+      this: XMLHttpRequest,
+      method: string,
+      url: string | URL,
+      async?: boolean,
+      username?: string | null,
+      password?: string | null
+    ): void {
+      Reflect.set(this, "__rsMethod", method.toUpperCase());
+      Reflect.set(this, "__rsUrl", typeof url === "string" ? url : url.toString());
+
+      originalXhrOpen.call(this, method, url, async ?? true, username ?? null, password ?? null);
+    };
+
+    XMLHttpRequest.prototype.send = function (
+      this: XMLHttpRequest,
+      body?: XMLHttpRequestBodyInit | Document | null
+    ): void {
+      this.addEventListener(
+        "loadend",
+        () => {
+          const method = Reflect.get(this, "__rsMethod");
+          const url = Reflect.get(this, "__rsUrl");
+          const startedAt = Reflect.get(this, "__rsStartedAt");
+          const isStartedAtNumber = typeof startedAt === "number";
+          const durationMs = isStartedAtNumber ? Date.now() - startedAt : 0;
+
+          if (typeof method === "string" && typeof url === "string") {
+            const status = Number.isFinite(this.status) ? this.status : null;
+            const hasNetworkFailure = status === 0;
+            pushEvent({
+              type: "xhr",
+              method,
+              url,
+              status,
+              durationMs,
+              timestamp: new Date().toISOString(),
+              ...(hasNetworkFailure ? { error: "XMLHttpRequest failed" } : {}),
+            });
+          }
+        },
+        { once: true }
+      );
+
+      Reflect.set(this, "__rsStartedAt", Date.now());
+      originalXhrSend.call(this, body);
+    };
+  };
 
   private async readCdpJson<T>(endpoint: string, path: string, timeoutMs: number = 2000): Promise<T | { error: string }> {
     let targetUrl: string;
@@ -126,142 +276,21 @@ export class BrowserManager {
     this.browser = await chromium.launch({ headless: true });
     this.context = await this.browser.newContext();
     await this.context.addInitScript(
-      ({
-        networkBufferGlobalKey,
-        networkBufferLimit,
-      }: {
-        networkBufferGlobalKey: string;
-        networkBufferLimit: number;
-      }) => {
-        type NetworkEventSeed = Omit<NetworkEvent, "isHttpError">;
-
-        const windowWithNetwork = window as typeof window & {
-          fetch: typeof fetch;
-        };
-        const getBuffer = (): NetworkEventSeed[] => {
-          const current = Reflect.get(windowWithNetwork, networkBufferGlobalKey);
-          if (Array.isArray(current)) {
-            return current as NetworkEventSeed[];
-          }
-          const emptyBuffer: NetworkEventSeed[] = [];
-          Reflect.set(windowWithNetwork, networkBufferGlobalKey, emptyBuffer);
-          return emptyBuffer;
-        };
-        const pushEvent = (event: NetworkEventSeed): void => {
-          const buffer = getBuffer();
-          buffer.push(event);
-          if (buffer.length > networkBufferLimit) {
-            buffer.splice(0, buffer.length - networkBufferLimit);
-          }
-        };
-
-        const originalFetch = windowWithNetwork.fetch.bind(windowWithNetwork);
-        const originalXhrOpen = XMLHttpRequest.prototype.open;
-        const originalXhrSend = XMLHttpRequest.prototype.send;
-
-        windowWithNetwork.fetch = async (
-          input: RequestInfo | URL,
-          init?: RequestInit
-        ): Promise<Response> => {
-          const startedAt = Date.now();
-          const requestUrl =
-            typeof input === "string"
-              ? input
-              : input instanceof URL
-                ? input.toString()
-                : input.url;
-
-          const requestMethod = init?.method ?? "GET";
-          const normalizedMethod = requestMethod.toUpperCase();
-
-          try {
-            const response = await originalFetch(input, init);
-            pushEvent({
-              type: "fetch",
-              url: requestUrl,
-              method: normalizedMethod,
-              status: response.status,
-              durationMs: Date.now() - startedAt,
-              timestamp: new Date().toISOString(),
-            });
-            return response;
-          } catch (error) {
-            pushEvent({
-              type: "fetch",
-              url: requestUrl,
-              method: normalizedMethod,
-              status: null,
-              durationMs: Date.now() - startedAt,
-              timestamp: new Date().toISOString(),
-              error: error instanceof Error ? error.message : String(error),
-            });
-            throw error;
-          }
-        };
-
-        XMLHttpRequest.prototype.open = function (
-          this: XMLHttpRequest,
-          method: string,
-          url: string | URL,
-          async?: boolean,
-          username?: string | null,
-          password?: string | null
-        ): void {
-          Reflect.set(this, "__rsMethod", method.toUpperCase());
-          Reflect.set(this, "__rsUrl", typeof url === "string" ? url : url.toString());
-
-          originalXhrOpen.call(this, method, url, async ?? true, username ?? null, password ?? null);
-        };
-
-        XMLHttpRequest.prototype.send = function (
-          this: XMLHttpRequest,
-          body?: XMLHttpRequestBodyInit | Document | null
-        ): void {
-          this.addEventListener(
-            "loadend",
-            () => {
-              const method = Reflect.get(this, "__rsMethod");
-              const url = Reflect.get(this, "__rsUrl");
-              const startedAt = Reflect.get(this, "__rsStartedAt");
-              const isStartedAtNumber = typeof startedAt === "number";
-              const durationMs = isStartedAtNumber ? Date.now() - startedAt : 0;
-
-              if (typeof method === "string" && typeof url === "string") {
-                const status = Number.isFinite(this.status) ? this.status : null;
-                const hasNetworkFailure = status === 0;
-                pushEvent({
-                  type: "xhr",
-                  method,
-                  url,
-                  status,
-                  durationMs,
-                  timestamp: new Date().toISOString(),
-                  ...(hasNetworkFailure ? { error: "XMLHttpRequest failed" } : {}),
-                });
-              }
-            },
-            { once: true }
-          );
-
-          Reflect.set(this, "__rsStartedAt", Date.now());
-          originalXhrSend.call(this, body);
-        };
-      },
-      {
-        networkBufferGlobalKey: BrowserManager.networkBufferGlobalKey,
-        networkBufferLimit: BrowserManager.networkBufferLimit,
-      }
+      BrowserManager.installRuntimeBridgeScript,
+      BrowserManager.getRuntimeBridgeArgs()
     );
     this.page = await this.context.newPage();
 
-    this.setupListeners();
+    this.activateRuntimePage(this.page);
     console.error("[react-sentinel] Browser launched (headless chromium, persistent session)");
   }
 
-  private setupListeners(): void {
-    if (!this.page) return;
+  private setupListeners(page: Page): void {
+    if (this.observedPages.has(page)) return;
+    this.observedPages.add(page);
 
-    this.page.on("console", (msg: ConsoleMessage) => {
+    page.on("console", (msg: ConsoleMessage) => {
+      if (this.runtimeEventPage !== page) return;
       // Map playwright console types to our types where possible
       let type: "log" | "warn" | "error" | "exception" = "log";
       const msgType = msg.type();
@@ -276,7 +305,8 @@ export class BrowserManager {
       });
     });
 
-    this.page.on("pageerror", (err: Error) => {
+    page.on("pageerror", (err: Error) => {
+      if (this.runtimeEventPage !== page) return;
       this.consoleEvents.push({
         type: "exception",
         text: err.stack || err.message,
@@ -285,20 +315,127 @@ export class BrowserManager {
     });
   }
 
+  private activateRuntimePage(page: Page): void {
+    if (this.runtimeEventPage !== page) {
+      this.consoleEvents = [];
+      this.runtimeEventPage = page;
+    }
+
+    this.setupListeners(page);
+  }
+
+  private async installRuntimeBridge(page: Page): Promise<void> {
+    const args = BrowserManager.getRuntimeBridgeArgs();
+    await page.addInitScript(BrowserManager.installRuntimeBridgeScript, args);
+    await page.evaluate(BrowserManager.installRuntimeBridgeScript, args);
+  }
+
+  private async clearAttachConnection(): Promise<void> {
+    const attachedPage = this.attachedPage;
+
+    if (this.attachedBrowser) {
+      await this.attachedBrowser.close();
+    }
+
+    this.attachedBrowser = null;
+    this.attachedPage = null;
+    this.attachedEndpoint = null;
+    this.attachedTargetId = null;
+
+    if (this.runtimeEventPage === attachedPage) {
+      this.runtimeEventPage = null;
+      this.consoleEvents = [];
+    }
+  }
+
+  private async findAttachedPage(
+    browser: Browser,
+    targetId: string
+  ): Promise<Page | null> {
+    for (const context of browser.contexts()) {
+      for (const page of context.pages()) {
+        if (page.isClosed()) continue;
+
+        const session = await context.newCDPSession(page);
+        try {
+          const targetInfo = (await session.send("Target.getTargetInfo")) as {
+            targetInfo?: { targetId?: string };
+          };
+
+          if (targetInfo.targetInfo?.targetId === targetId) {
+            return page;
+          }
+        } finally {
+          await session.detach().catch(() => undefined);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private async getAttachedPage(): Promise<Page> {
+    const selection = this.attachSelection;
+    if (!selection) {
+      throw new Error("No CDP tab is currently selected. Run select_attach_tab first.");
+    }
+
+    if (
+      this.attachedBrowser &&
+      this.attachedPage &&
+      !this.attachedPage.isClosed() &&
+      this.attachedEndpoint === selection.endpoint &&
+      this.attachedTargetId === selection.tab.id
+    ) {
+      this.activateRuntimePage(this.attachedPage);
+      return this.attachedPage;
+    }
+
+    await this.clearAttachConnection();
+
+    const browser = await chromium.connectOverCDP(selection.endpoint);
+
+    try {
+      const attachedPage = await this.findAttachedPage(browser, selection.tab.id);
+      if (!attachedPage) {
+        this.attachSelection = null;
+        throw new Error(
+          "The selected CDP tab is no longer available. Run get_attach_tabs and select_attach_tab again."
+        );
+      }
+
+      await this.installRuntimeBridge(attachedPage);
+
+      this.attachedBrowser = browser;
+      this.attachedPage = attachedPage;
+      this.attachedEndpoint = selection.endpoint;
+      this.attachedTargetId = selection.tab.id;
+      this.activateRuntimePage(attachedPage);
+
+      return attachedPage;
+    } catch (error) {
+      await browser.close();
+      throw error;
+    }
+  }
+
   /** Close browser and release all resources. */
   async close(): Promise<void> {
+    await this.clearAttachConnection();
+
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
       this.context = null;
       this.page = null;
+      this.runtimeEventPage = null;
       this.consoleEvents = [];
       console.error("[react-sentinel] Browser closed");
     }
   }
 
-  /** Gets the persistent page, navigating if the URL is different. */
-  public async getPage(url: string): Promise<Page> {
+  /** Gets the persistent sandbox page, navigating if the URL is different. */
+  public async getSandboxPage(url: string): Promise<Page> {
     if (!this.page) await this.launch();
 
     const currentUrl = this.page!.url();
@@ -319,6 +456,16 @@ export class BrowserManager {
     }
 
     return this.page!;
+  }
+
+  private async getRuntimePage(url: string): Promise<Page> {
+    if (this.attachSelection) {
+      return this.getAttachedPage();
+    }
+
+    const page = await this.getSandboxPage(url);
+    this.activateRuntimePage(page);
+    return page;
   }
 
   private static buildAttachHelpMessage(): string {
@@ -406,10 +553,18 @@ export class BrowserManager {
       return urlMatches && titleMatches;
     });
 
-    const selectedTab =
-      this.attachSelection?.endpoint === endpoint
-        ? tabs.find((tab) => tab.id === this.attachSelection?.tab.id) ?? null
-        : null;
+    const hasCurrentSelection =
+      this.attachSelection?.endpoint === endpoint &&
+      tabs.some((tab) => tab.id === this.attachSelection?.tab.id);
+
+    if (this.attachSelection?.endpoint === endpoint && !hasCurrentSelection) {
+      this.attachSelection = null;
+      await this.clearAttachConnection();
+    }
+
+    const selectedTab = hasCurrentSelection
+      ? tabs.find((tab) => tab.id === this.attachSelection?.tab.id) ?? null
+      : null;
 
     return {
       endpoint,
@@ -457,6 +612,7 @@ export class BrowserManager {
     const selectedTab = matches[0] ?? null;
 
     if (selectedTab) {
+      await this.clearAttachConnection();
       this.attachSelection = {
         endpoint,
         tab: selectedTab,
@@ -486,7 +642,7 @@ export class BrowserManager {
   /** Evaluates a script in the context of the page. */
   async evaluate<T>(url: string, script: string | (() => T | Promise<T>)): Promise<T | { error: string }> {
     try {
-      const page = await this.getPage(url);
+      const page = await this.getRuntimePage(url);
       return await page.evaluate(script);
     } catch (e) {
       return this.handleError(e, url) as { error: string };
@@ -509,7 +665,7 @@ export class BrowserManager {
     const type = "ping" as const;
 
     try {
-      const page = await this.getPage(url);
+      const page = await this.getSandboxPage(url);
       const data = await page.evaluate<PingData>(() => ({
         pong: true,
         url: document.URL,
@@ -535,7 +691,7 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      const page = await this.getPage(url);
+      const page = await this.getRuntimePage(url);
 
       const [pageUrl, title, viewport, react] = await Promise.all([
         page.evaluate<string>(() => document.URL),
@@ -571,7 +727,7 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      const page = await this.getPage(url);
+      const page = await this.getRuntimePage(url);
 
       const { extractReactTree } = await import("../diagnostics/react-tree.js");
       const tree = await page.evaluate(extractReactTree, { maxDepth, includeHostNodes });
@@ -596,7 +752,7 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      const page = await this.getPage(url);
+      const page = await this.getRuntimePage(url);
 
       const { inspectReactComponent } = await import("../diagnostics/react-inspector.js");
       const componentNode = await page.evaluate(inspectReactComponent, componentName);
@@ -619,8 +775,8 @@ export class BrowserManager {
   async getConsoleEvents(url: string): Promise<ConsoleEventsResponse | { error: string }> {
     const start = Date.now();
     try {
-      const page = await this.getPage(url);
-      
+      const page = await this.getRuntimePage(url);
+
       // We return the collected events so far.
       // We clone the array so that we can return the current snapshot.
       const events = [...this.consoleEvents];
@@ -635,9 +791,7 @@ export class BrowserManager {
     }
   }
 
-  private async readNetworkEvents(url: string): Promise<NetworkEvent[] | { error: string }> {
-    const page = await this.getPage(url);
-
+  private async readNetworkEvents(page: Page): Promise<NetworkEvent[]> {
     const rawEvents = await page.evaluate((globalKey) => {
       const windowWithNetwork = window as typeof window & {
         [key: string]: unknown;
@@ -667,30 +821,29 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      const page = await this.getPage(url);
-      const eventsOrError = await this.readNetworkEvents(url);
-      if ("error" in eventsOrError) return eventsOrError;
+      const page = await this.getRuntimePage(url);
+      const events = await this.readNetworkEvents(page);
 
-      const events = eventsOrError
+      const filteredEvents = events
         .filter((event) => (onlyErrors ? event.isHttpError || Boolean(event.error) : true))
         .slice(-limit);
 
-      const statusCounts = events.reduce<Record<string, number>>((acc, event) => {
+      const statusCounts = filteredEvents.reduce<Record<string, number>>((acc, event) => {
         const statusKey = event.status === null ? "no-status" : String(event.status);
         acc[statusKey] = (acc[statusKey] ?? 0) + 1;
         return acc;
       }, {});
 
       const summary = {
-        total: events.length,
-        httpErrorCount: events.filter((event) => event.isHttpError || Boolean(event.error)).length,
+        total: filteredEvents.length,
+        httpErrorCount: filteredEvents.filter((event) => event.isHttpError || Boolean(event.error)).length,
         statusCounts,
-        urls: [...new Set(events.map((event) => event.url))],
+        urls: [...new Set(filteredEvents.map((event) => event.url))],
       };
 
       return {
         url: await page.evaluate(() => document.URL),
-        events,
+        events: filteredEvents,
         summary,
         durationMs: Date.now() - start,
       };
@@ -706,9 +859,8 @@ export class BrowserManager {
     const start = Date.now();
 
     try {
-      const page = await this.getPage(url);
-      const networkOrError = await this.readNetworkEvents(url);
-      if ("error" in networkOrError) return networkOrError;
+      const page = await this.getRuntimePage(url);
+      const networkEvents = await this.readNetworkEvents(page);
 
       const consoleTimeline = this.consoleEvents.map((event, index): RuntimeTimelineEvent => {
         const source: RuntimeTimelineSource = event.type === "exception" ? "exception" : "console";
@@ -731,7 +883,7 @@ export class BrowserManager {
         };
       });
 
-      const networkTimeline = networkOrError.map((event, index): RuntimeTimelineEvent => ({
+      const networkTimeline = networkEvents.map((event, index): RuntimeTimelineEvent => ({
         source: "network",
         level: event.isHttpError || Boolean(event.error) ? "error" : "info",
         message: `${event.method} ${event.url}${event.status === null ? "" : ` -> ${event.status}`}`,
@@ -796,7 +948,7 @@ export class BrowserManager {
   ): Promise<import("./protocol.js").InteractionData> {
     const start = Date.now();
     try {
-      const page = await this.getPage(url);
+      const page = await this.getRuntimePage(url);
 
       // Wait for element to be present with a short timeout
       // This handles SCRUM-50: elements might not be immediately available
@@ -844,7 +996,7 @@ export class BrowserManager {
   /** Validates an assertion on the current page state. */
   async validate(url: string, assertion: import("./protocol.js").Assertion): Promise<import("./protocol.js").ValidationResult> {
     try {
-      const page = await this.getPage(url);
+      const page = await this.getRuntimePage(url);
 
       if (assertion.type === "text_present") {
         const text = assertion.expected || "";
