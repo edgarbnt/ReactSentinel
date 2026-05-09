@@ -50,6 +50,7 @@ import type {
   ConsoleEventsResponse,
   InspectionResponseMode,
   RenderCountsResponse,
+  RenderHotspotsResponse,
   RuntimeTimelineEvent,
   RuntimeTimelineLevel,
   RuntimeTimelineResponse,
@@ -58,7 +59,12 @@ import type {
 } from "../diagnostics/protocol.js";
 import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
-import { buildRenderMonitorSource, readRenderMonitor, type RenderMonitorInitArgs } from "../diagnostics/render-monitor.js";
+import {
+  buildRenderMonitorSource,
+  readRenderCountsState,
+  readRenderHotspotsState,
+  type RenderMonitorInitArgs,
+} from "../diagnostics/render-monitor.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
 
@@ -1173,7 +1179,12 @@ export class BrowserManager {
   private handleInspectionError(
     e: unknown,
     url: string,
-    operation: "get_react_tree" | "inspect_component" | "get_component_state" | "get_render_counts"
+    operation:
+      | "get_react_tree"
+      | "inspect_component"
+      | "get_component_state"
+      | "get_render_counts"
+      | "get_render_hotspots"
   ) {
     const raw = this.handleError(e, url).error;
     const code =
@@ -1356,11 +1367,11 @@ export class BrowserManager {
 
     try {
       const page = await this.getRuntimePage(url);
-      const result = await page.evaluate(readRenderMonitor, {
-        mode: "counts",
-        globalKey: BrowserManager.renderMonitorGlobalKey,
-        limit,
-      });
+      const state = await page.evaluate((globalKey) => {
+        const current = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
+        return current && typeof current === "object" ? current : null;
+      }, BrowserManager.renderMonitorGlobalKey);
+      const result = readRenderCountsState(state, { limit });
 
       return {
         url: await page.evaluate(() => document.URL),
@@ -1376,6 +1387,37 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleInspectionError(e, url, "get_render_counts");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRenderHotspots() — Sprint 10
+  // ---------------------------------------------------------------------------
+  async getRenderHotspots(
+    url: string,
+    threshold: number = 8,
+    windowMs: number = 1000,
+    limit: number = 20
+  ): Promise<RenderHotspotsResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const state = await page.evaluate((globalKey) => {
+        const current = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
+        return current && typeof current === "object" ? current : null;
+      }, BrowserManager.renderMonitorGlobalKey);
+      const result = readRenderHotspotsState(state, { threshold, windowMs, limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        threshold: result.threshold,
+        windowMs: result.windowMs,
+        hotspots: result.hotspots,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_render_hotspots");
     }
   }
 

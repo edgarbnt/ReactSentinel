@@ -1,4 +1,10 @@
-import type { ComponentHookKind, RenderCountEntry, RenderCountsSummary } from "./protocol.js";
+import type {
+  ComponentHookKind,
+  RenderCountEntry,
+  RenderCountsSummary,
+  RenderHotspotCause,
+  RenderHotspotEntry,
+} from "./protocol.js";
 
 export interface RenderMonitorInitArgs {
   globalKey: string;
@@ -11,6 +17,8 @@ type RenderCountsReadRequest = {
   mode: string;
   globalKey?: string;
   limit?: number;
+  threshold?: number;
+  windowMs?: number;
 };
 
 type RenderCountSample = {
@@ -359,33 +367,18 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
   })();`;
 }
 
-export function readRenderMonitor(
-  request: RenderCountsReadRequest
-): {
+function normalizeState(stateValue: unknown): {
+  commitCount: number;
   counts: RenderCountRecord[];
-  summary: RenderCountsSummary;
 } {
-  const globalKey = request.globalKey ?? "__RS_RENDER_MONITOR__";
-  const limit = typeof request.limit === "number" && request.limit > 0 ? request.limit : 50;
-  const stateValue = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
-  const emptySummary: RenderCountsSummary = {
-    totalComponents: 0,
-    totalRenders: 0,
-    observedCommits: 0,
-  };
-
-  if (!stateValue || typeof stateValue !== "object") {
-    return {
-      counts: [],
-      summary: emptySummary,
-    };
-  }
-
-  const state = stateValue as {
-    commitCount?: unknown;
-    components?: Record<string, RenderCountRecord>;
-  };
-  const counts = Object.values(state.components ?? {})
+  const state =
+    stateValue && typeof stateValue === "object"
+      ? (stateValue as {
+          commitCount?: unknown;
+          components?: Record<string, RenderCountRecord>;
+        })
+      : null;
+  const counts = Object.values(state?.components ?? {})
     .map((entry) => ({
       componentName: entry.componentName,
       pathText: entry.pathText,
@@ -394,15 +387,180 @@ export function readRenderMonitor(
       lastSeen: entry.lastSeen,
       samples: Array.isArray(entry.samples) ? entry.samples : [],
     }))
-    .sort((left, right) => right.count - left.count || right.lastSeen.localeCompare(left.lastSeen))
+    .sort((left, right) => right.count - left.count || right.lastSeen.localeCompare(left.lastSeen));
+
+  return {
+    commitCount: typeof state?.commitCount === "number" ? state.commitCount : 0,
+    counts,
+  };
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${key}:${stableStringify((value as Record<string, unknown>)[key])}`)
+      .join(",")}}`;
+  }
+  return String(value);
+}
+
+function buildProbableCause(entry: RenderCountRecord): RenderHotspotCause {
+  const samples = [...entry.samples].sort((left, right) => left.renderId - right.renderId);
+  if (samples.length < 2) {
+    return {
+      type: "unknown",
+      summary: "Not enough render history has been captured to explain this hotspot yet.",
+    };
+  }
+
+  const hookChanges = new Map<string, { index: number; kind: ComponentHookKind; changeCount: number }>();
+  let propChangeCount = 0;
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previousSample = samples[index - 1];
+    const currentSample = samples[index];
+
+    if (stableStringify(previousSample.props) !== stableStringify(currentSample.props)) {
+      propChangeCount += 1;
+    }
+
+    const previousHooks = new Map(previousSample.hooks.map((hook) => [`${hook.index}:${hook.kind}`, hook] as const));
+    const currentHooks = new Map(currentSample.hooks.map((hook) => [`${hook.index}:${hook.kind}`, hook] as const));
+    const hookKeys = new Set([...previousHooks.keys(), ...currentHooks.keys()]);
+    for (const hookKey of hookKeys) {
+      const previousHook = previousHooks.get(hookKey);
+      const currentHook = currentHooks.get(hookKey);
+      const previousValue = previousHook ? stableStringify(previousHook.value) : "undefined";
+      const currentValue = currentHook ? stableStringify(currentHook.value) : "undefined";
+      if (previousValue === currentValue) continue;
+
+      const currentStat = hookChanges.get(hookKey);
+      hookChanges.set(hookKey, {
+        index: currentHook?.index ?? previousHook?.index ?? -1,
+        kind: currentHook?.kind ?? previousHook?.kind ?? "unknown",
+        changeCount: (currentStat?.changeCount ?? 0) + 1,
+      });
+    }
+  }
+
+  const transitions = samples.length - 1;
+  const dominantHook = [...hookChanges.values()].sort((left, right) => right.changeCount - left.changeCount)[0] ?? null;
+  const hotThreshold = Math.max(2, transitions - 1);
+
+  if (dominantHook && dominantHook.changeCount >= hotThreshold) {
+    if (dominantHook.kind === "state") {
+      return {
+        type: "unstable_state",
+        summary: `State hook #${dominantHook.index} changed on ${dominantHook.changeCount}/${transitions} recent render transitions.`,
+      };
+    }
+
+    return {
+      type: "unstable_hook_value",
+      summary: `Hook #${dominantHook.index} (${dominantHook.kind}) changed on ${dominantHook.changeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (propChangeCount >= hotThreshold) {
+    return {
+      type: "unstable_props",
+      summary: `Props changed on ${propChangeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  return {
+    type: "repeated_effect",
+    summary: "Recent renders kept repeating without one dominant prop diff, which suggests an effect loop or chained state updates.",
+  };
+}
+
+export function readRenderCountsState(
+  stateValue: unknown,
+  options?: Pick<RenderCountsReadRequest, "limit">
+): {
+  counts: RenderCountRecord[];
+  summary: RenderCountsSummary;
+} {
+  const limit = typeof options?.limit === "number" && options.limit > 0 ? options.limit : 50;
+  const normalized = normalizeState(stateValue);
+  const emptySummary: RenderCountsSummary = {
+    totalComponents: 0,
+    totalRenders: 0,
+    observedCommits: 0,
+  };
+
+  if (normalized.counts.length === 0) {
+    return {
+      counts: [],
+      summary: emptySummary,
+    };
+  }
+
+  return {
+    counts: normalized.counts.slice(0, limit),
+    summary: {
+      totalComponents: normalized.counts.length,
+      totalRenders: normalized.counts.reduce((total, entry) => total + entry.count, 0),
+      observedCommits: normalized.commitCount,
+    },
+  };
+}
+
+export function readRenderHotspotsState(
+  stateValue: unknown,
+  options?: Pick<RenderCountsReadRequest, "threshold" | "windowMs" | "limit">
+): {
+  threshold: number;
+  windowMs: number;
+  hotspots: RenderHotspotEntry[];
+} {
+  const threshold = typeof options?.threshold === "number" && options.threshold > 0 ? options.threshold : 8;
+  const windowMs = typeof options?.windowMs === "number" && options.windowMs > 0 ? options.windowMs : 1000;
+  const limit = typeof options?.limit === "number" && options.limit > 0 ? options.limit : 20;
+  const normalized = normalizeState(stateValue);
+  const now = Date.now();
+
+  const hotspots = normalized.counts
+    .map((entry) => {
+      const recentRenderCount = entry.samples.filter((sample) => {
+        const sampleTime = Date.parse(sample.timestamp);
+        return Number.isFinite(sampleTime) && now - sampleTime <= windowMs;
+      }).length;
+
+      const rendersPerSecond = Number(((recentRenderCount / windowMs) * 1000).toFixed(2));
+      return {
+        componentName: entry.componentName,
+        pathText: entry.pathText,
+        count: entry.count,
+        firstSeen: entry.firstSeen,
+        lastSeen: entry.lastSeen,
+        recentRenderCount,
+        threshold,
+        windowMs,
+        rendersPerSecond,
+        probableCause: buildProbableCause(entry),
+      };
+    })
+    .filter((entry) => entry.recentRenderCount >= threshold)
+    .sort(
+      (left, right) =>
+        right.recentRenderCount - left.recentRenderCount ||
+        right.rendersPerSecond - left.rendersPerSecond ||
+        right.count - left.count
+    )
     .slice(0, limit);
 
   return {
-    counts,
-    summary: {
-      totalComponents: Object.keys(state.components ?? {}).length,
-      totalRenders: counts.reduce((total, entry) => total + entry.count, 0),
-      observedCommits: typeof state.commitCount === "number" ? state.commitCount : 0,
-    },
+    threshold,
+    windowMs,
+    hotspots,
   };
 }

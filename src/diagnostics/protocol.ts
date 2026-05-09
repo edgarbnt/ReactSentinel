@@ -149,6 +149,34 @@ export interface RenderCountsResponse {
   durationMs: number;
 }
 
+export type RenderHotspotCauseType =
+  | "unstable_state"
+  | "unstable_hook_value"
+  | "unstable_props"
+  | "repeated_effect"
+  | "unknown";
+
+export interface RenderHotspotCause {
+  type: RenderHotspotCauseType;
+  summary: string;
+}
+
+export interface RenderHotspotEntry extends RenderCountEntry {
+  recentRenderCount: number;
+  threshold: number;
+  windowMs: number;
+  rendersPerSecond: number;
+  probableCause: RenderHotspotCause;
+}
+
+export interface RenderHotspotsResponse {
+  url: string;
+  threshold: number;
+  windowMs: number;
+  hotspots: RenderHotspotEntry[];
+  durationMs: number;
+}
+
 export interface ConsoleEvent {
   type: "log" | "warn" | "error" | "exception";
   text: string;
