@@ -124,6 +124,92 @@ export interface ComponentStateResponse {
   durationMs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Render monitor (Sprint 10)
+// ---------------------------------------------------------------------------
+
+export interface RenderCountEntry {
+  componentName: string;
+  pathText: string;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface RenderCountsSummary {
+  totalComponents: number;
+  totalRenders: number;
+  observedCommits: number;
+}
+
+export interface RenderCountsResponse {
+  url: string;
+  counts: RenderCountEntry[];
+  summary: RenderCountsSummary;
+  durationMs: number;
+}
+
+export type RenderHotspotCauseType =
+  | "unstable_state"
+  | "unstable_hook_value"
+  | "unstable_props"
+  | "repeated_effect"
+  | "unknown";
+
+export interface RenderHotspotCause {
+  type: RenderHotspotCauseType;
+  summary: string;
+}
+
+export interface RenderHotspotEntry extends RenderCountEntry {
+  recentRenderCount: number;
+  threshold: number;
+  windowMs: number;
+  rendersPerSecond: number;
+  probableCause: RenderHotspotCause;
+}
+
+export interface RenderHotspotsResponse {
+  url: string;
+  threshold: number;
+  windowMs: number;
+  hotspots: RenderHotspotEntry[];
+  durationMs: number;
+}
+
+export interface HookChangeEntry {
+  timestamp: string;
+  renderId: number;
+  hookIndex: number;
+  hookKind: ComponentHookKind;
+  previousValue: unknown;
+  nextValue: unknown;
+}
+
+export interface HookChangeSummaryEntry {
+  hookIndex: number;
+  hookKind: ComponentHookKind;
+  changeCount: number;
+  suspected: boolean;
+}
+
+export interface HookChangesSummary {
+  trackedRenders: number;
+  totalChanges: number;
+  suspiciousHooks: HookChangeSummaryEntry[];
+  probableCause: string;
+}
+
+export interface HookChangesResponse {
+  url: string;
+  componentName: string;
+  pathText: string | null;
+  found: boolean;
+  changes: HookChangeEntry[];
+  summary: HookChangesSummary;
+  durationMs: number;
+}
+
 export interface ConsoleEvent {
   type: "log" | "warn" | "error" | "exception";
   text: string;

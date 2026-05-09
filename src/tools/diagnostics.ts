@@ -149,6 +149,128 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_render_counts
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_render_counts",
+    [
+      "Return per-component render counters collected by the replay runtime monitor.",
+      "Each entry includes the component name, path, render count, and first/last observation timestamps.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of component counters to return. Default is 50."),
+    },
+    async ({ url, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getRenderCounts(url, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_render_counts failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: get_render_hotspots
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_render_hotspots",
+    [
+      "List components that rendered too many times in a short window.",
+      "Use the threshold and window to detect likely render explosions and get a probable-cause hint.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      threshold: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Minimum render count inside the time window before a component is flagged. Default is 8."),
+      windowMs: z
+        .number()
+        .int()
+        .min(100)
+        .max(30_000)
+        .optional()
+        .describe("Size of the sliding window used to detect rapid rerenders. Default is 1000ms."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Maximum number of hotspots to return. Default is 20."),
+    },
+    async ({ url, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_render_hotspots failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: get_hook_changes
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_hook_changes",
+    [
+      "Return the chronological hook-value changes captured for one component across recent renders.",
+      "Useful for spotting which hook value keeps changing in a render loop.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      componentName: z
+        .string()
+        .min(1)
+        .describe("Name of the component whose hook history should be inspected."),
+      pathText: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Optional full component path when multiple instances share the same name."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of hook change events to return. Default is 50."),
+    },
+    async ({ url, componentName, pathText, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getHookChanges(url, componentName, pathText, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_hook_changes failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_console_events
   // -------------------------------------------------------------------------
   server.tool(

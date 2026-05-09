@@ -48,7 +48,10 @@ import type {
   ComponentStateResponse,
   ConsoleEvent,
   ConsoleEventsResponse,
+  HookChangesResponse,
   InspectionResponseMode,
+  RenderCountsResponse,
+  RenderHotspotsResponse,
   RuntimeTimelineEvent,
   RuntimeTimelineLevel,
   RuntimeTimelineResponse,
@@ -57,6 +60,13 @@ import type {
 } from "../diagnostics/protocol.js";
 import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
+import {
+  buildRenderMonitorSource,
+  readHookChangesState,
+  readRenderCountsState,
+  readRenderHotspotsState,
+  type RenderMonitorInitArgs,
+} from "../diagnostics/render-monitor.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
 
@@ -202,6 +212,10 @@ export class BrowserManager {
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
   private static readonly networkBufferLimit = 200;
   private static readonly runtimeBridgeInstalledGlobalKey = "__RS_RUNTIME_BRIDGE_INSTALLED__";
+  private static readonly renderMonitorGlobalKey = "__RS_RENDER_MONITOR__";
+  private static readonly renderMonitorInstalledGlobalKey = "__RS_RENDER_MONITOR_INSTALLED__";
+  private static readonly renderMonitorMaxEntries = 200;
+  private static readonly renderMonitorSamplesPerComponent = 25;
   private static readonly runtimePatchStateGlobalKey = "__RS_RUNTIME_PATCH_STATE__";
   private static readonly maxRuntimePatchSourceLength = 20_000;
   private static readonly reservedRuntimePatchIds = new Set(["__proto__", "prototype", "constructor"]);
@@ -245,6 +259,15 @@ export class BrowserManager {
       networkBufferGlobalKey: BrowserManager.networkBufferGlobalKey,
       networkBufferLimit: BrowserManager.networkBufferLimit,
       runtimeBridgeInstalledGlobalKey: BrowserManager.runtimeBridgeInstalledGlobalKey,
+    };
+  }
+
+  private static getRenderMonitorArgs(): RenderMonitorInitArgs {
+    return {
+      globalKey: BrowserManager.renderMonitorGlobalKey,
+      installedGlobalKey: BrowserManager.renderMonitorInstalledGlobalKey,
+      maxEntries: BrowserManager.renderMonitorMaxEntries,
+      maxSamplesPerComponent: BrowserManager.renderMonitorSamplesPerComponent,
     };
   }
 
@@ -507,11 +530,13 @@ export class BrowserManager {
     this.context = await this.browser.newContext();
     this.replaySessionId = this.nextReplaySessionId++;
     this.activeRuntimePatches = [];
-    
-    // Install runtime bridge on context to capture network events during initial page load
+
+    // Install runtime observers before the first page load.
     const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
     await this.context.addInitScript({ content: installerSource });
-    
+    const renderMonitorSource = buildRenderMonitorSource(BrowserManager.getRenderMonitorArgs());
+    await this.context.addInitScript({ content: renderMonitorSource });
+
     this.page = await this.context.newPage();
 
     this.activateRuntimePage(this.page);
@@ -570,6 +595,8 @@ export class BrowserManager {
     // We just need to evaluate it to ensure it's active on the current page state.
     const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
     await page.evaluate(installerSource);
+    const renderMonitorSource = buildRenderMonitorSource(BrowserManager.getRenderMonitorArgs());
+    await page.evaluate(renderMonitorSource);
   }
 
   private async readPageTitle(page: Page | null): Promise<string | null> {
@@ -1151,7 +1178,13 @@ export class BrowserManager {
   private handleInspectionError(
     e: unknown,
     url: string,
-    operation: "get_react_tree" | "inspect_component" | "get_component_state"
+    operation:
+      | "get_react_tree"
+      | "inspect_component"
+      | "get_component_state"
+      | "get_render_counts"
+      | "get_render_hotspots"
+      | "get_hook_changes"
   ) {
     const raw = this.handleError(e, url).error;
     const code =
@@ -1323,6 +1356,105 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleInspectionError(e, url, "get_component_state");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRenderCounts() — Sprint 10
+  // ---------------------------------------------------------------------------
+  async getRenderCounts(url: string, limit: number = 50): Promise<RenderCountsResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const state = await page.evaluate((globalKey) => {
+        const current = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
+        return current && typeof current === "object" ? current : null;
+      }, BrowserManager.renderMonitorGlobalKey);
+      const result = readRenderCountsState(state, { limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        counts: result.counts.map((entry) => ({
+          componentName: entry.componentName,
+          pathText: entry.pathText,
+          count: entry.count,
+          firstSeen: entry.firstSeen,
+          lastSeen: entry.lastSeen,
+        })),
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_render_counts");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRenderHotspots() — Sprint 10
+  // ---------------------------------------------------------------------------
+  async getRenderHotspots(
+    url: string,
+    threshold: number = 8,
+    windowMs: number = 1000,
+    limit: number = 20
+  ): Promise<RenderHotspotsResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const state = await page.evaluate((globalKey) => {
+        const current = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
+        return current && typeof current === "object" ? current : null;
+      }, BrowserManager.renderMonitorGlobalKey);
+      const result = readRenderHotspotsState(state, { threshold, windowMs, limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        threshold: result.threshold,
+        windowMs: result.windowMs,
+        hotspots: result.hotspots,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_render_hotspots");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getHookChanges() — Sprint 10
+  // ---------------------------------------------------------------------------
+  async getHookChanges(
+    url: string,
+    componentName: string,
+    pathText?: string,
+    limit: number = 50
+  ): Promise<HookChangesResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const state = await page.evaluate((globalKey) => {
+        const current = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
+        return current && typeof current === "object" ? current : null;
+      }, BrowserManager.renderMonitorGlobalKey);
+      const result = readHookChangesState(state, {
+        componentName,
+        pathText,
+        limit,
+      });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        componentName,
+        pathText: result.pathText,
+        found: result.found,
+        changes: result.changes,
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_hook_changes");
     }
   }
 

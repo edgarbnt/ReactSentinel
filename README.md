@@ -168,6 +168,12 @@ The hook/state inspector is intentionally bounded so responses stay readable for
 
 These limits are by design: they keep the output stable and compact enough to be useful in the middle of a debugging session.
 
+## Sprint 10 render monitor tools
+
+- `get_render_counts` returns per-component render counters with the component name, path, and first/last observed timestamps.
+- `get_render_hotspots` flags components that crossed a configurable render threshold inside a short time window and adds a probable-cause hint.
+- `get_hook_changes` returns the chronological hook diffs captured for a component, plus the most suspicious unstable hook values.
+
 ## Attach vs replay limits
 
 React-Sentinel now exposes two browser session modes:
@@ -208,3 +214,8 @@ The integrated test app also contains dedicated Sprint 6 fixtures for:
 - hook state inspection (`get_component_state`)
 - component/context inspection (`inspect_component`)
 - compact inspection payload validation
+
+Sprint 10 adds a dedicated render-loop fixture:
+- click `#render-loop-start-button` to trigger a short controlled render explosion
+- observe `#render-loop-status`, `#render-loop-step`, and `#render-loop-token`
+- expected diagnosis: a repeated effect driven by an unstable hook value inside `InfiniteLoopScenario`
