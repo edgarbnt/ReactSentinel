@@ -93,6 +93,7 @@ Once the endpoint is ready, use `get_attach_tabs` to list the available page tab
 
 ## Replay sandbox tools
 
+- `get_server_info` advertises `replay_sandbox` as available today and keeps `shadow_sandbox` as planned for the later shadow-patching milestone.
 - `get_session_status` reports whether React-Sentinel is currently using the live attached tab or the isolated replay browser, and exposes the replay headless/headed configuration.
 - `navigate_replay` opens the isolated replay browser, navigates to a URL, waits for `load`, `domcontentloaded`, or `networkidle`, and returns readable navigation errors when the target app is unavailable.
 - `replay_interactions` replays ordered `click`, `fill`, `wait`, and `press` steps in that replay browser and logs the result of each step.

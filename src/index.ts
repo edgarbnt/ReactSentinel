@@ -67,8 +67,9 @@ server.tool(
           get_network_events: "available",
           get_runtime_timeline: "available",
           runtime_inspection: "available",
+          replay_sandbox: "available",
           replay_interactions: "available",
-          shadow_sandbox: "available",
+          shadow_sandbox: "planned",
           interaction_simulation: "available",
         },
       });
