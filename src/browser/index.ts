@@ -334,18 +334,20 @@ export class BrowserManager {
   private async clearAttachConnection(): Promise<void> {
     const attachedPage = this.attachedPage;
 
-    if (this.attachedBrowser) {
-      await this.attachedBrowser.close();
-    }
+    try {
+      if (this.attachedBrowser) {
+        await this.attachedBrowser.close();
+      }
+    } finally {
+      this.attachedBrowser = null;
+      this.attachedPage = null;
+      this.attachedEndpoint = null;
+      this.attachedTargetId = null;
 
-    this.attachedBrowser = null;
-    this.attachedPage = null;
-    this.attachedEndpoint = null;
-    this.attachedTargetId = null;
-
-    if (this.runtimeEventPage === attachedPage) {
-      this.runtimeEventPage = null;
-      this.consoleEvents = [];
+      if (this.runtimeEventPage === attachedPage) {
+        this.runtimeEventPage = null;
+        this.consoleEvents = [];
+      }
     }
   }
 
