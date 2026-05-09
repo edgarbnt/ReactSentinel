@@ -13,6 +13,8 @@
 import { chromium } from "playwright";
 import type { Browser, BrowserContext, Page, ConsoleMessage } from "playwright";
 import type {
+  Assertion,
+  AssertionPrimitive,
   BrowserResult,
   PingData,
   AttachStatus,
@@ -30,6 +32,8 @@ import type {
   ReplayStepResult,
   ReplayWaitUntil,
   SessionInfo,
+  ValidationResult,
+  ValidationScenarioResponse,
 } from "./protocol.js";
 import type {
   RuntimeStatus,
@@ -54,6 +58,110 @@ type RuntimeBridgeInitArgs = {
   networkBufferLimit: number;
   runtimeBridgeInstalledGlobalKey: string;
 };
+
+function buildRuntimeBridgeSource(args: RuntimeBridgeInitArgs): string {
+  return `(() => {
+    const { networkBufferGlobalKey, networkBufferLimit, runtimeBridgeInstalledGlobalKey } = ${JSON.stringify(args)};
+    const windowWithNetwork = window;
+    if (Reflect.get(windowWithNetwork, runtimeBridgeInstalledGlobalKey) === true) {
+      return;
+    }
+
+    const getBuffer = () => {
+      const current = Reflect.get(windowWithNetwork, networkBufferGlobalKey);
+      if (Array.isArray(current)) {
+        return current;
+      }
+      const emptyBuffer = [];
+      Reflect.set(windowWithNetwork, networkBufferGlobalKey, emptyBuffer);
+      return emptyBuffer;
+    };
+
+    const pushEvent = (event) => {
+      const buffer = getBuffer();
+      buffer.push(event);
+      if (buffer.length > networkBufferLimit) {
+        buffer.splice(0, buffer.length - networkBufferLimit);
+      }
+    };
+
+    const originalFetch = windowWithNetwork.fetch.bind(windowWithNetwork);
+    const originalXhrOpen = XMLHttpRequest.prototype.open;
+    const originalXhrSend = XMLHttpRequest.prototype.send;
+
+    windowWithNetwork.fetch = async (input, init) => {
+      const startedAt = Date.now();
+      const requestUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const requestMethod =
+        (init && init.method) ||
+        (input instanceof Request ? input.method : undefined) ||
+        "GET";
+
+      try {
+        const response = await originalFetch(input, init);
+        pushEvent({
+          type: "fetch",
+          url: requestUrl,
+          method: String(requestMethod).toUpperCase(),
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          timestamp: new Date().toISOString(),
+        });
+        return response;
+      } catch (error) {
+        pushEvent({
+          type: "fetch",
+          url: requestUrl,
+          method: String(requestMethod).toUpperCase(),
+          status: null,
+          durationMs: Date.now() - startedAt,
+          timestamp: new Date().toISOString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    };
+
+    XMLHttpRequest.prototype.open = function(method, url, async, username, password) {
+      Reflect.set(this, "__rsMethod", String(method).toUpperCase());
+      Reflect.set(this, "__rsUrl", typeof url === "string" ? url : url.toString());
+      originalXhrOpen.call(this, method, url, async ?? true, username ?? null, password ?? null);
+    };
+
+    XMLHttpRequest.prototype.send = function(body) {
+      this.addEventListener("loadend", () => {
+        const method = Reflect.get(this, "__rsMethod");
+        const url = Reflect.get(this, "__rsUrl");
+        const startedAt = Reflect.get(this, "__rsStartedAt");
+        const durationMs = typeof startedAt === "number" ? Date.now() - startedAt : 0;
+
+        if (typeof method === "string" && typeof url === "string") {
+          const status = Number.isFinite(this.status) ? this.status : null;
+          pushEvent({
+            type: "xhr",
+            method,
+            url,
+            status,
+            durationMs,
+            timestamp: new Date().toISOString(),
+            ...(status === 0 ? { error: "XMLHttpRequest failed" } : {}),
+          });
+        }
+      }, { once: true });
+
+      Reflect.set(this, "__rsStartedAt", Date.now());
+      originalXhrSend.call(this, body);
+    };
+
+    getBuffer();
+    Reflect.set(windowWithNetwork, runtimeBridgeInstalledGlobalKey, true);
+  })();`;
+}
 
 export class BrowserManager {
   private browser: Browser | null = null;
@@ -115,137 +223,50 @@ export class BrowserManager {
     };
   }
 
-  private static readonly installRuntimeBridgeScript = ({
-    networkBufferGlobalKey,
-    networkBufferLimit,
-    runtimeBridgeInstalledGlobalKey,
-  }: RuntimeBridgeInitArgs): void => {
-    type NetworkEventSeed = Omit<NetworkEvent, "isHttpError">;
+  private static getPathSegments(path?: string): string[] {
+    return typeof path === "string"
+      ? path
+          .split(".")
+          .map((segment) => segment.trim())
+          .filter((segment) => segment.length > 0)
+      : [];
+  }
 
-    const windowWithNetwork = window as typeof window & {
-      fetch: typeof fetch;
-      [key: string]: unknown;
-    };
+  private static readValueAtPath(value: unknown, path?: string): unknown {
+    const segments = BrowserManager.getPathSegments(path);
+    let current = value;
 
-    if (Reflect.get(windowWithNetwork, runtimeBridgeInstalledGlobalKey) === true) {
-      return;
+    for (const segment of segments) {
+      if (current === null || current === undefined) {
+        return undefined;
+      }
+
+      if (Array.isArray(current)) {
+        const index = Number(segment);
+        if (!Number.isInteger(index)) {
+          return undefined;
+        }
+        current = current[index];
+        continue;
+      }
+
+      if (typeof current !== "object") {
+        return undefined;
+      }
+
+      current = Reflect.get(current, segment);
     }
 
-    Reflect.set(windowWithNetwork, runtimeBridgeInstalledGlobalKey, true);
+    return current;
+  }
 
-    const getBuffer = (): NetworkEventSeed[] => {
-      const current = Reflect.get(windowWithNetwork, networkBufferGlobalKey);
-      if (Array.isArray(current)) {
-        return current as NetworkEventSeed[];
-      }
-      const emptyBuffer: NetworkEventSeed[] = [];
-      Reflect.set(windowWithNetwork, networkBufferGlobalKey, emptyBuffer);
-      return emptyBuffer;
-    };
+  private static isAssertionPrimitive(value: unknown): value is AssertionPrimitive {
+    return value === null || ["string", "number", "boolean"].includes(typeof value);
+  }
 
-    const pushEvent = (event: NetworkEventSeed): void => {
-      const buffer = getBuffer();
-      buffer.push(event);
-      if (buffer.length > networkBufferLimit) {
-        buffer.splice(0, buffer.length - networkBufferLimit);
-      }
-    };
-
-    const originalFetch = windowWithNetwork.fetch.bind(windowWithNetwork);
-    const originalXhrOpen = XMLHttpRequest.prototype.open;
-    const originalXhrSend = XMLHttpRequest.prototype.send;
-
-    windowWithNetwork.fetch = async (
-      input: RequestInfo | URL,
-      init?: RequestInit
-    ): Promise<Response> => {
-      const startedAt = Date.now();
-      const requestUrl =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-
-      const requestMethod =
-        init?.method ??
-        (input instanceof Request ? input.method : undefined) ??
-        "GET";
-      const normalizedMethod = requestMethod.toUpperCase();
-
-      try {
-        const response = await originalFetch(input, init);
-        pushEvent({
-          type: "fetch",
-          url: requestUrl,
-          method: normalizedMethod,
-          status: response.status,
-          durationMs: Date.now() - startedAt,
-          timestamp: new Date().toISOString(),
-        });
-        return response;
-      } catch (error) {
-        pushEvent({
-          type: "fetch",
-          url: requestUrl,
-          method: normalizedMethod,
-          status: null,
-          durationMs: Date.now() - startedAt,
-          timestamp: new Date().toISOString(),
-          error: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
-      }
-    };
-
-    XMLHttpRequest.prototype.open = function (
-      this: XMLHttpRequest,
-      method: string,
-      url: string | URL,
-      async?: boolean,
-      username?: string | null,
-      password?: string | null
-    ): void {
-      Reflect.set(this, "__rsMethod", method.toUpperCase());
-      Reflect.set(this, "__rsUrl", typeof url === "string" ? url : url.toString());
-
-      originalXhrOpen.call(this, method, url, async ?? true, username ?? null, password ?? null);
-    };
-
-    XMLHttpRequest.prototype.send = function (
-      this: XMLHttpRequest,
-      body?: XMLHttpRequestBodyInit | Document | null
-    ): void {
-      this.addEventListener(
-        "loadend",
-        () => {
-          const method = Reflect.get(this, "__rsMethod");
-          const url = Reflect.get(this, "__rsUrl");
-          const startedAt = Reflect.get(this, "__rsStartedAt");
-          const isStartedAtNumber = typeof startedAt === "number";
-          const durationMs = isStartedAtNumber ? Date.now() - startedAt : 0;
-
-          if (typeof method === "string" && typeof url === "string") {
-            const status = Number.isFinite(this.status) ? this.status : null;
-            const hasNetworkFailure = status === 0;
-            pushEvent({
-              type: "xhr",
-              method,
-              url,
-              status,
-              durationMs,
-              timestamp: new Date().toISOString(),
-              ...(hasNetworkFailure ? { error: "XMLHttpRequest failed" } : {}),
-            });
-          }
-        },
-        { once: true }
-      );
-
-      Reflect.set(this, "__rsStartedAt", Date.now());
-      originalXhrSend.call(this, body);
-    };
-  };
+  private static formatPathLabel(path?: string): string {
+    return path && path.trim().length > 0 ? path : "(root)";
+  }
 
   private async readCdpJson<T>(endpoint: string, path: string, timeoutMs: number = 2000): Promise<T | { error: string }> {
     let targetUrl: string;
@@ -305,10 +326,6 @@ export class BrowserManager {
 
     this.browser = await chromium.launch({ headless: this.replayHeadless });
     this.context = await this.browser.newContext();
-    await this.context.addInitScript(
-      BrowserManager.installRuntimeBridgeScript,
-      BrowserManager.getRuntimeBridgeArgs()
-    );
     this.page = await this.context.newPage();
 
     this.activateRuntimePage(this.page);
@@ -357,9 +374,9 @@ export class BrowserManager {
   }
 
   private async installRuntimeBridge(page: Page): Promise<void> {
-    const args = BrowserManager.getRuntimeBridgeArgs();
-    await page.addInitScript(BrowserManager.installRuntimeBridgeScript, args);
-    await page.evaluate(BrowserManager.installRuntimeBridgeScript, args);
+    const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
+    await page.addInitScript({ content: installerSource });
+    await page.evaluate(installerSource);
   }
 
   private async readPageTitle(page: Page | null): Promise<string | null> {
@@ -1095,6 +1112,33 @@ export class BrowserManager {
     });
   }
 
+  private async clearNetworkEventsBuffer(page: Page): Promise<number> {
+    return page.evaluate((globalKey) => {
+      const windowWithNetwork = window as typeof window & {
+        [key: string]: unknown;
+      };
+      const current = Reflect.get(windowWithNetwork, globalKey);
+      const cleared = Array.isArray(current) ? current.length : 0;
+      Reflect.set(windowWithNetwork, globalKey, []);
+      return cleared;
+    }, BrowserManager.networkBufferGlobalKey);
+  }
+
+  async clearRuntimeSignals(url: string): Promise<{ consoleCleared: number; networkCleared: number } | { error: string }> {
+    try {
+      const page = await this.getRuntimePage(url);
+      const consoleCleared = this.consoleEvents.length;
+      this.consoleEvents = [];
+      const networkCleared = await this.clearNetworkEventsBuffer(page);
+      return {
+        consoleCleared,
+        networkCleared,
+      };
+    } catch (e) {
+      return this.handleError(e, url);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // getNetworkEvents() — SCRUM-102
   // ---------------------------------------------------------------------------
@@ -1267,6 +1311,10 @@ export class BrowserManager {
         await element.click({
           timeout: stepTimeoutMs,
         });
+      } else if (step.action === "type") {
+        await element.type(step.value, {
+          timeout: stepTimeoutMs,
+        });
       } else {
         await element.fill(step.value, {
           timeout: stepTimeoutMs,
@@ -1337,6 +1385,364 @@ export class BrowserManager {
     }
   }
 
+  private buildSkippedValidation(assertion: Assertion, details: string): ValidationResult {
+    return {
+      pass: false,
+      assertion,
+      details,
+      actual: {
+        skipped: true,
+      },
+      durationMs: 0,
+    };
+  }
+
+  private async evaluateAssertion(page: Page, url: string, assertion: Assertion): Promise<ValidationResult> {
+    const start = Date.now();
+
+    try {
+      if (assertion.type === "text_present" || assertion.type === "text_absent") {
+        const found = await page.evaluate((text) => document.body.innerText.includes(text), assertion.expected);
+        const pass = assertion.type === "text_present" ? found : !found;
+        return {
+          pass,
+          assertion,
+          expected: assertion.expected,
+          actual: {
+            found,
+          },
+          details: pass
+            ? assertion.type === "text_present"
+              ? `Text "${assertion.expected}" found.`
+              : `Text "${assertion.expected}" is absent as expected.`
+            : assertion.type === "text_present"
+              ? `Text "${assertion.expected}" not found in page body.`
+              : `Text "${assertion.expected}" is still present in page body.`,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      if (assertion.type === "selector_visible" || assertion.type === "selector_hidden") {
+        const selectorSnapshot = await page.evaluate((selector) => {
+          const nodes = Array.from(document.querySelectorAll(selector));
+          return {
+            count: nodes.length,
+            visibleCount: nodes.filter((node) => {
+              if (!(node instanceof HTMLElement)) return true;
+              const style = window.getComputedStyle(node);
+              return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
+            }).length,
+          };
+        }, assertion.selector);
+
+        const pass =
+          assertion.type === "selector_visible"
+            ? selectorSnapshot.visibleCount > 0
+            : selectorSnapshot.visibleCount === 0;
+
+        return {
+          pass,
+          assertion,
+          actual: selectorSnapshot,
+          details: pass
+            ? assertion.type === "selector_visible"
+              ? `Selector "${assertion.selector}" is visible.`
+              : `Selector "${assertion.selector}" is hidden or absent as expected.`
+            : assertion.type === "selector_visible"
+              ? `Selector "${assertion.selector}" is not visible.`
+              : `Selector "${assertion.selector}" is still visible.`,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      if (
+        assertion.type === "component_present" ||
+        assertion.type === "component_prop_value" ||
+        assertion.type === "component_state_value"
+      ) {
+        const { inspectReactRuntime } = await import("../diagnostics/react-runtime.js");
+
+        if (assertion.type === "component_present" || assertion.type === "component_prop_value") {
+          const request: ReactRuntimeInspectRequest = {
+            mode: "component",
+            componentName: assertion.componentName,
+            compact: false,
+          };
+          const result = await page.evaluate(inspectReactRuntime, request);
+          const component = result.component ?? null;
+
+          if (assertion.type === "component_present") {
+            return {
+              pass: component !== null,
+              assertion,
+              actual: {
+                found: component !== null,
+                path: component?.pathText ?? null,
+              },
+              details:
+                component !== null
+                  ? `Component "${assertion.componentName}" found at ${component.pathText}.`
+                  : `Component "${assertion.componentName}" was not found in the React tree.`,
+              durationMs: Date.now() - start,
+            };
+          }
+
+          if (component === null) {
+            return {
+              pass: false,
+              assertion,
+              expected: assertion.expected,
+              actual: {
+                found: false,
+              },
+              details: `Component "${assertion.componentName}" was not found in the React tree.`,
+              durationMs: Date.now() - start,
+            };
+          }
+
+          const actualValue = BrowserManager.readValueAtPath(component.props, assertion.propPath);
+          const pass =
+            BrowserManager.isAssertionPrimitive(actualValue) && actualValue === assertion.expected;
+
+          return {
+            pass,
+            assertion,
+            expected: assertion.expected,
+            actual: {
+              componentPath: component.pathText,
+              propPath: assertion.propPath,
+              value: actualValue,
+            },
+            details: pass
+              ? `Component "${assertion.componentName}" prop "${assertion.propPath}" matches the expected value.`
+              : `Component "${assertion.componentName}" prop "${assertion.propPath}" was ${JSON.stringify(actualValue)} instead of ${JSON.stringify(assertion.expected)}.`,
+            durationMs: Date.now() - start,
+          };
+        }
+
+        const request: ReactRuntimeInspectRequest = {
+          mode: "component-state",
+          componentName: assertion.componentName,
+          compact: false,
+        };
+        const result = await page.evaluate(inspectReactRuntime, request);
+        const stateNode = result.state ?? null;
+
+        if (stateNode === null) {
+          return {
+            pass: false,
+            assertion,
+            expected: assertion.expected,
+            actual: {
+              found: false,
+            },
+            details: `Component "${assertion.componentName}" was not found in the React tree.`,
+            durationMs: Date.now() - start,
+          };
+        }
+
+        const hook = stateNode.hooks.find((candidate) => candidate.index === assertion.hookIndex) ?? null;
+        if (hook === null) {
+          return {
+            pass: false,
+            assertion,
+            expected: assertion.expected,
+            actual: {
+              hookIndexes: stateNode.hooks.map((candidate) => candidate.index),
+            },
+            details: `Hook index ${assertion.hookIndex} was not found on component "${assertion.componentName}".`,
+            durationMs: Date.now() - start,
+          };
+        }
+
+        const actualValue = BrowserManager.readValueAtPath(hook.value, assertion.valuePath);
+        const pass =
+          BrowserManager.isAssertionPrimitive(actualValue) && actualValue === assertion.expected;
+
+        return {
+          pass,
+          assertion,
+          expected: assertion.expected,
+          actual: {
+            componentPath: stateNode.pathText,
+            hookIndex: hook.index,
+            hookKind: hook.kind,
+            valuePath: assertion.valuePath ?? null,
+            value: actualValue,
+          },
+          details: pass
+            ? `Component "${assertion.componentName}" hook #${assertion.hookIndex} at ${BrowserManager.formatPathLabel(assertion.valuePath)} matches the expected value.`
+            : `Component "${assertion.componentName}" hook #${assertion.hookIndex} at ${BrowserManager.formatPathLabel(assertion.valuePath)} was ${JSON.stringify(actualValue)} instead of ${JSON.stringify(assertion.expected)}.`,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      if (assertion.type === "no_console_errors" || assertion.type === "no_console_warnings") {
+        const matchingEvents = this.consoleEvents.filter((event) =>
+          assertion.type === "no_console_errors"
+            ? event.type === "error" || event.type === "exception"
+            : event.type === "warn"
+        );
+        const pass = matchingEvents.length === 0;
+
+        return {
+          pass,
+          assertion,
+          actual: pass ? { count: 0 } : matchingEvents,
+          details: pass
+            ? assertion.type === "no_console_errors"
+              ? "No console errors detected."
+              : "No console warnings detected."
+            : assertion.type === "no_console_errors"
+              ? `Detected ${matchingEvents.length} console errors.`
+              : `Detected ${matchingEvents.length} console warnings.`,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      if (assertion.type === "no_http_5xx" || assertion.type === "no_unexpected_http_requests") {
+        const networkEvents = await this.readNetworkEvents(page);
+
+        if (assertion.type === "no_http_5xx") {
+          const failingEvents = networkEvents.filter(
+            (event) => typeof event.status === "number" && event.status >= 500
+          );
+          const pass = failingEvents.length === 0;
+
+          return {
+            pass,
+            assertion,
+            actual: pass ? { count: 0 } : failingEvents,
+            details: pass
+              ? "No HTTP 5xx responses detected."
+              : `Detected ${failingEvents.length} HTTP 5xx responses.`,
+            durationMs: Date.now() - start,
+          };
+        }
+
+        const unexpectedEvents = networkEvents.filter(
+          (event) =>
+            !assertion.allowedUrlSubstrings.some((allowed) => event.url.includes(allowed))
+        );
+        const pass = unexpectedEvents.length === 0;
+
+        return {
+          pass,
+          assertion,
+          expected: assertion.allowedUrlSubstrings,
+          actual: pass ? { count: 0 } : unexpectedEvents,
+          details: pass
+            ? "No unexpected HTTP requests detected."
+            : `Detected ${unexpectedEvents.length} unexpected HTTP requests.`,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      return {
+        pass: false,
+        assertion,
+        details: "Unknown assertion type.",
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return {
+        pass: false,
+        assertion,
+        details: `Validation failed: ${String(e)}`,
+        durationMs: Date.now() - start,
+      };
+    }
+  }
+
+  async runValidationScenario(
+    steps: ReplayStep[],
+    assertions: Assertion[],
+    options?: {
+      url?: string;
+      headless?: boolean;
+      timeoutMs?: number;
+      waitUntil?: ReplayWaitUntil;
+      resetSession?: boolean;
+      continueOnError?: boolean;
+      waitMs?: number;
+    }
+  ): Promise<ValidationScenarioResponse | { error: string }> {
+    const startedAt = new Date().toISOString();
+    const start = Date.now();
+
+    try {
+      const page = await this.getReplayPageForSequence(options?.url, {
+        headless: options?.headless,
+        timeoutMs: options?.timeoutMs,
+        waitUntil: options?.waitUntil,
+        resetSession: options?.resetSession,
+      });
+      this.consoleEvents = [];
+      await this.clearNetworkEventsBuffer(page);
+
+      const stepResults: ReplayStepResult[] = [];
+
+      for (const [index, step] of steps.entries()) {
+        const result = await this.runReplayStep(page, step);
+        stepResults.push({
+          index,
+          url: await page.evaluate(() => document.URL),
+          ...result,
+        });
+
+        if (!result.success && !options?.continueOnError) {
+          break;
+        }
+      }
+
+      let assertionResults: ValidationResult[];
+      const firstFailedStep = stepResults.find((result) => !result.success);
+
+      if (firstFailedStep && !options?.continueOnError) {
+        assertionResults = assertions.map((assertion) =>
+          this.buildSkippedValidation(assertion, `Assertion skipped because step #${firstFailedStep.index} failed.`)
+        );
+      } else {
+        const waitMs = options?.waitMs ?? 500;
+        if (waitMs > 0) {
+          await page.waitForTimeout(waitMs);
+        }
+        const pageUrl = await page.evaluate(() => document.URL);
+        assertionResults = [];
+        for (const assertion of assertions) {
+          assertionResults.push(await this.evaluateAssertion(page, pageUrl, assertion));
+        }
+      }
+
+      const traces = {
+        console: [...this.consoleEvents],
+        network: await this.readNetworkEvents(page),
+      };
+      const summary = {
+        actionCount: stepResults.length,
+        actionFailures: stepResults.filter((step) => !step.success).length,
+        assertionCount: assertionResults.length,
+        assertionFailures: assertionResults.filter((result) => !result.pass).length,
+        overallPass: stepResults.every((step) => step.success) && assertionResults.every((result) => result.pass),
+      };
+
+      return {
+        session: await this.getSessionInfo(),
+        url: await page.evaluate(() => document.URL),
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - start,
+        success: summary.overallPass,
+        steps: stepResults,
+        assertions: assertionResults,
+        traces,
+        summary,
+      };
+    } catch (error) {
+      return options?.url ? this.handleError(error, options.url) : { error: String(error) };
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // simulateInteraction() — SCRUM-13
   // ---------------------------------------------------------------------------
@@ -1397,40 +1803,10 @@ export class BrowserManager {
   }
 
   /** Validates an assertion on the current page state. */
-  async validate(url: string, assertion: import("./protocol.js").Assertion): Promise<import("./protocol.js").ValidationResult> {
+  async validate(url: string, assertion: Assertion): Promise<ValidationResult> {
     try {
       const page = await this.getRuntimePage(url);
-
-      if (assertion.type === "text_present") {
-        const text = assertion.expected || "";
-        const found = await page.evaluate((t) => {
-          return document.body.innerText.includes(t);
-        }, text);
-
-        return {
-          pass: found,
-          assertion,
-          details: found ? `Text "${text}" found.` : `Text "${text}" not found in page body.`,
-        };
-      }
-
-      if (assertion.type === "no_console_errors") {
-        const errors = this.consoleEvents.filter(e => e.type === "error" || e.type === "exception");
-        const pass = errors.length === 0;
-
-        return {
-          pass,
-          assertion,
-          details: pass ? "No console errors detected." : `Detected ${errors.length} console errors.`,
-          actual: pass ? undefined : errors,
-        };
-      }
-
-      return {
-        pass: false,
-        assertion,
-        details: `Unknown assertion type: ${assertion.type}`,
-      };
+      return this.evaluateAssertion(page, url, assertion);
     } catch (e) {
       return {
         pass: false,

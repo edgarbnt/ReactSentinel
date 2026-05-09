@@ -69,6 +69,7 @@ server.tool(
           runtime_inspection: "available",
           replay_sandbox: "available",
           replay_interactions: "available",
+          validate_scenario: "available",
           shadow_sandbox: "planned",
           interaction_simulation: "available",
         },
