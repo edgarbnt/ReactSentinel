@@ -152,6 +152,8 @@ function formatAssertion(assertion: Assertion): string {
       return "no_http_5xx";
     case "no_unexpected_http_requests":
       return `no_unexpected_http_requests ${assertion.allowedUrlSubstrings.join(", ")}`;
+    default:
+      return `unknown_assertion ${assertion.type}`;
   }
 }
 
