@@ -208,3 +208,8 @@ The integrated test app also contains dedicated Sprint 6 fixtures for:
 - hook state inspection (`get_component_state`)
 - component/context inspection (`inspect_component`)
 - compact inspection payload validation
+
+Sprint 10 adds a dedicated render-loop fixture:
+- click `#render-loop-start-button` to trigger a short controlled render explosion
+- observe `#render-loop-status`, `#render-loop-step`, and `#render-loop-token`
+- expected diagnosis: a repeated effect driven by an unstable hook value inside `InfiniteLoopScenario`
