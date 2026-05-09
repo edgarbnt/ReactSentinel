@@ -11,6 +11,7 @@ React-Sentinel bridges AI terminals (Claude, Copilot CLI…) to a live browser r
 | **Runtime Inspection** | Explore the React Fiber tree, inspect component props, extract simple hook values (`useState`, `useRef`, `useMemo`), surface React context values, and audit network or console signals live |
 | **Replay Sandbox** | Launch an isolated Playwright browser, navigate to a target app, and replay deterministic interaction sequences without touching the developer's live browser |
 | **Interaction Simulation** | Drive either the attached live tab or the replay browser (click, fill, press, navigate) to reproduce bugs before attempting to fix them |
+| **Validation Assertions** | Assert DOM text/visibility, React component presence and simple prop/state values, plus console/network invariants, with structured pass/fail output |
 
 ## Stack
 
@@ -96,7 +97,9 @@ Once the endpoint is ready, use `get_attach_tabs` to list the available page tab
 - `get_server_info` advertises `replay_sandbox` as available today and keeps `shadow_sandbox` as planned for the later shadow-patching milestone.
 - `get_session_status` reports whether React-Sentinel is currently using the live attached tab or the isolated replay browser, and exposes the replay headless/headed configuration.
 - `navigate_replay` opens the isolated replay browser, navigates to a URL, waits for `load`, `domcontentloaded`, or `networkidle`, and returns readable navigation errors when the target app is unavailable.
-- `replay_interactions` replays ordered `click`, `fill`, `wait`, and `press` steps in that replay browser and logs the result of each step.
+- `replay_interactions` replays ordered `click`, `type`, `fill`, `wait`, and `press` steps in that replay browser and logs the result of each step.
+- `validate_after_action` now supports richer assertions for DOM, React runtime, console, and network checks after a single interaction.
+- `validate_scenario` runs a multi-step replay plus multiple assertions and returns both a raw JSON report and a readable Markdown report.
 
 `navigate_replay` and `replay_interactions` accept `headless` so the same sandbox can run invisibly in automated flows or visibly in a local debugging session.
 
@@ -154,4 +157,4 @@ The integrated test app also contains dedicated Sprint 6 fixtures for:
 
 ## Status
 
-✅ **Sprint 7** — runtime inspection now covers live-tab attach mode plus an isolated replay sandbox with explicit session status, configurable headless/headed navigation, and deterministic replay sequences.
+✅ **Sprint 8** — React-Sentinel now ships a richer assertion engine for DOM, React runtime, console, and network validation, plus readable Markdown/JSON validation reports for replay scenarios.
