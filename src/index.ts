@@ -58,6 +58,8 @@ server.tool(
         capabilities: {
           browser_ping: "available",
           get_attach_status: "available",
+          get_attach_tabs: "available",
+          select_attach_tab: "available",
           get_runtime_status: "available",
           get_network_events: "available",
           get_runtime_timeline: "available",
