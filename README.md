@@ -73,6 +73,16 @@ The test app is a minimal React 18 page used as a live inspection fixture.
 
 > Restart Claude Desktop after saving the config. The `react-sentinel` tools will appear in the tool list.
 
+### 5. Optional: attach to a live Chrome session
+
+To inspect the browser you are already using, start Chrome with remote debugging enabled:
+
+```bash
+google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-cdp
+```
+
+Then call `get_attach_status` to check whether the CDP endpoint is reachable. If it is not, the tool returns a clear error plus the launch command above.
+
 ## Available scripts
 
 | Script | Description |

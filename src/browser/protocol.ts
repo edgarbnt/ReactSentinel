@@ -99,3 +99,26 @@ export interface PingData {
   title: string;
   timestamp: string;
 }
+
+export interface CdpVersionInfo {
+  Browser?: string;
+  "Protocol-Version"?: string;
+  "User-Agent"?: string;
+  "V8-Version"?: string;
+  "WebKit-Version"?: string;
+  webSocketDebuggerUrl?: string;
+}
+
+export interface AttachStatus {
+  endpoint: string;
+  checkedAt: string;
+  status: "attach_ready" | "attach_unavailable";
+  ready: boolean;
+  reachable: boolean;
+  help: string;
+  error?: string;
+  browser?: string;
+  protocolVersion?: string;
+  userAgent?: string;
+  webSocketDebuggerUrl?: string;
+}
