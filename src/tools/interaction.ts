@@ -7,7 +7,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { browserManager } from "../browser/index.js";
-import type { Assertion, ReplayStep, ValidationScenarioResponse } from "../browser/protocol.js";
+import type { Assertion, ValidationScenarioResponse } from "../browser/protocol.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
@@ -96,37 +96,6 @@ const assertionSchema = z.discriminatedUnion("type", [
     allowedUrlSubstrings: z.array(z.string().min(1)).min(1),
   }),
 ]);
-
-function toReplayStep(interaction: z.infer<typeof interactionSchema>): ReplayStep {
-  if (interaction.action === "press") {
-    return {
-      action: "press",
-      key: interaction.key || "Enter",
-      selector: interaction.selector,
-    };
-  }
-
-  if (interaction.action === "click") {
-    return {
-      action: "click",
-      selector: interaction.selector,
-    };
-  }
-
-  if (interaction.action === "type") {
-    return {
-      action: "type",
-      selector: interaction.selector,
-      value: interaction.value || "",
-    };
-  }
-
-  return {
-    action: "fill",
-    selector: interaction.selector,
-    value: interaction.value || "",
-  };
-}
 
 function formatAssertion(assertion: Assertion): string {
   switch (assertion.type) {
