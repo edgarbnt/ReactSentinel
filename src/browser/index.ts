@@ -86,6 +86,16 @@ export class BrowserManager {
       }));
   }
 
+  private static buildAttachConsentMessage(tab: AttachTabInfo): string {
+    const tabLabel = tab.title || tab.url;
+    return [
+      `Live browser mode needs explicit confirmation before React-Sentinel reuses tab #${tab.index}: ${tabLabel}.`,
+      "With consent, React-Sentinel can inspect that tab's DOM, React tree, console output, and network activity, and can run interaction tools in that same tab.",
+      "Only the selected tab is reused, and the selection is cleared if the tab closes or you select another tab.",
+      "Re-run select_attach_tab with confirm: true if you want to allow this tab.",
+    ].join(" ");
+  }
+
   private static getRuntimeBridgeArgs(): RuntimeBridgeInitArgs {
     return {
       networkBufferGlobalKey: BrowserManager.networkBufferGlobalKey,
@@ -146,8 +156,7 @@ export class BrowserManager {
             ? input.toString()
             : input.url;
 
-      const requestMethod =
-        init?.method ?? (input instanceof Request ? input.method : "GET");
+      const requestMethod = init?.method ?? "GET";
       const normalizedMethod = requestMethod.toUpperCase();
 
       try {
@@ -334,20 +343,18 @@ export class BrowserManager {
   private async clearAttachConnection(): Promise<void> {
     const attachedPage = this.attachedPage;
 
-    try {
-      if (this.attachedBrowser) {
-        await this.attachedBrowser.close();
-      }
-    } finally {
-      this.attachedBrowser = null;
-      this.attachedPage = null;
-      this.attachedEndpoint = null;
-      this.attachedTargetId = null;
+    if (this.attachedBrowser) {
+      await this.attachedBrowser.close();
+    }
 
-      if (this.runtimeEventPage === attachedPage) {
-        this.runtimeEventPage = null;
-        this.consoleEvents = [];
-      }
+    this.attachedBrowser = null;
+    this.attachedPage = null;
+    this.attachedEndpoint = null;
+    this.attachedTargetId = null;
+
+    if (this.runtimeEventPage === attachedPage) {
+      this.runtimeEventPage = null;
+      this.consoleEvents = [];
     }
   }
 
@@ -380,7 +387,7 @@ export class BrowserManager {
   private async getAttachedPage(): Promise<Page> {
     const selection = this.attachSelection;
     if (!selection) {
-      throw new Error("No CDP tab is currently selected. Run select_attach_tab first.");
+      throw new Error("No CDP tab is currently selected. Run select_attach_tab with confirm: true first.");
     }
 
     if (
@@ -417,7 +424,7 @@ export class BrowserManager {
 
       return attachedPage;
     } catch (error) {
-      await browser.close().catch(() => undefined);
+      await browser.close();
       throw error;
     }
   }
@@ -584,7 +591,8 @@ export class BrowserManager {
 
   async selectAttachTab(
     endpoint: string = DEFAULT_CDP_ENDPOINT,
-    selector: AttachTabSelector
+    selector: AttachTabSelector,
+    confirm: boolean = false
   ): Promise<AttachTabSelectionResponse | { error: string }> {
     const checkedAt = new Date().toISOString();
     const listOrError = await this.readCdpJson<CdpTargetInfo[]>(endpoint, "/json/list");
@@ -615,6 +623,25 @@ export class BrowserManager {
     const selectedTab = matches[0] ?? null;
 
     if (selectedTab) {
+      if (!confirm) {
+        await this.clearAttachConnection();
+        this.attachSelection = null;
+
+        return {
+          endpoint,
+          checkedAt,
+          selection: selector,
+          matchedCount: matches.length,
+          found: true,
+          confirmed: false,
+          requiresConfirmation: true,
+          selectedTab: null,
+          candidateTab: selectedTab,
+          tabs,
+          message: BrowserManager.buildAttachConsentMessage(selectedTab),
+        };
+      }
+
       await this.clearAttachConnection();
       this.attachSelection = {
         endpoint,
@@ -629,11 +656,14 @@ export class BrowserManager {
       selection: selector,
       matchedCount: matches.length,
       found: selectedTab !== null,
+      confirmed: selectedTab !== null,
+      requiresConfirmation: false,
       selectedTab,
+      candidateTab: selectedTab,
       tabs,
       message:
         selectedTab !== null
-          ? `Selected tab #${selectedTab.index}: ${selectedTab.title || selectedTab.url}`
+          ? `Selected tab #${selectedTab.index}: ${selectedTab.title || selectedTab.url}. Live browser mode is now enabled for this tab.`
           : selector.kind === "index"
             ? `No CDP tab found at index ${selector.index}.`
             : selector.kind === "url"
