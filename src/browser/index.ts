@@ -619,9 +619,7 @@ export class BrowserManager {
       return this.getSandboxPage(url, options);
     }
 
-    await this.launch(options?.headless);
-
-    if (!this.page || this.page.isClosed()) {
+    if (!this.page || this.page.isClosed() || this.page.url() === "about:blank") {
       throw new Error("No replay session is active. Call navigate_replay first or provide a URL.");
     }
 
