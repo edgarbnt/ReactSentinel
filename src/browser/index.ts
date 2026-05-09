@@ -1428,7 +1428,7 @@ export class BrowserManager {
           return {
             count: nodes.length,
             visibleCount: nodes.filter((node) => {
-              if (!(node instanceof HTMLElement)) return true;
+              if (!(node instanceof Element)) return false;
               const style = window.getComputedStyle(node);
               return style.display !== "none" && style.visibility !== "hidden" && style.opacity !== "0";
             }).length,
