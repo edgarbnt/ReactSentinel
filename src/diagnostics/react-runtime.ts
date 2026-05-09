@@ -194,14 +194,15 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
   }): ComponentInspectionNode {
     const props = serializeProps(match.fiber.memoizedProps);
     const contexts = extractContexts(match.fiber, match.pathFibers);
+    const childCount = countDirectChildren(match.fiber);
     return {
       name: getComponentName(match.fiber),
       props,
       path: match.path,
       pathText: match.path.join(" > "),
-      childrenCount: countDirectChildren(match.fiber),
+      childrenCount: childCount,
       contexts,
-      summary: buildSummary(match.path, props, extractHooks(match.fiber), contexts, countDirectChildren(match.fiber)),
+      summary: buildSummary(match.path, props, extractHooks(match.fiber), contexts, childCount),
     };
   }
 
@@ -211,13 +212,16 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     pathFibers: FiberLike[];
   }): ComponentStateNode {
     const hooks = extractHooks(match.fiber);
+    const props = serializeProps(match.fiber.memoizedProps);
+    const contexts = extractContexts(match.fiber, match.pathFibers);
+    const childCount = countDirectChildren(match.fiber);
     return {
       name: getComponentName(match.fiber),
       path: match.path,
       pathText: match.path.join(" > "),
-      childrenCount: countDirectChildren(match.fiber),
+      childrenCount: childCount,
       hooks,
-      summary: buildSummary(match.path, serializeProps(match.fiber.memoizedProps), hooks, extractContexts(match.fiber, match.pathFibers), countDirectChildren(match.fiber)),
+      summary: buildSummary(match.path, props, hooks, contexts, childCount),
     };
   }
 
