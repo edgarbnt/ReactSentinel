@@ -229,6 +229,48 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_hook_changes
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_hook_changes",
+    [
+      "Return the chronological hook-value changes captured for one component across recent renders.",
+      "Useful for spotting which hook value keeps changing in a render loop.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      componentName: z
+        .string()
+        .min(1)
+        .describe("Name of the component whose hook history should be inspected."),
+      pathText: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Optional full component path when multiple instances share the same name."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of hook change events to return. Default is 50."),
+    },
+    async ({ url, componentName, pathText, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getHookChanges(url, componentName, pathText, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_hook_changes failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_console_events
   // -------------------------------------------------------------------------
   server.tool(
