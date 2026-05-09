@@ -588,9 +588,6 @@ export class BrowserManager {
     const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
     await page.addInitScript({ content: installerSource });
     await page.evaluate(installerSource);
-    const renderMonitorSource = buildRenderMonitorSource(BrowserManager.getRenderMonitorArgs());
-    await page.addInitScript({ content: renderMonitorSource });
-    await page.evaluate(renderMonitorSource);
   }
 
   private async ensureRuntimeBridgeOnPage(page: Page): Promise<void> {
