@@ -71,11 +71,18 @@ export interface ComponentHookValue {
   value: unknown;
 }
 
+export interface ComponentContextValue {
+  name: string;
+  source: "dependency" | "provider";
+  value: unknown;
+}
+
 export interface ComponentInspectionNode {
   name: string;
   props: Record<string, unknown>;
   path: string[];
   childrenCount: number;
+  contexts: ComponentContextValue[];
 }
 
 export interface ComponentInspectionResponse {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TodoList } from "./components/TodoList";
 import { BuggySearch } from "./components/BuggySearch";
 import { MockApiScenario } from "./components/MockApiScenario";
+import { ThemeContextScenario } from "./components/ThemeContextScenario";
 
 export default function App(): JSX.Element {
   const [count, setCount] = useState(0);
@@ -36,6 +37,7 @@ export default function App(): JSX.Element {
 
       <MockApiScenario />
       <BuggySearch />
+      <ThemeContextScenario />
       <TodoList />
     </div>
   );

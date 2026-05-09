@@ -1,24 +1,42 @@
-import type { ComponentHookValue, ComponentStateNode } from "./protocol.js";
+import type {
+  ComponentContextValue,
+  ComponentHookValue,
+  ComponentInspectionNode,
+  ComponentStateNode,
+} from "./protocol.js";
 
 export interface ReactRuntimeInspectRequest {
-  mode: "component-state";
+  mode: "component" | "component-state";
   componentName?: string;
 }
 
 export interface ReactRuntimeInspectResult {
+  component?: ComponentInspectionNode | null;
   state?: ComponentStateNode | null;
 }
 
 export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactRuntimeInspectResult {
   const fiberRoot = findRootFiber();
   if (!fiberRoot) {
-    return { state: null };
+    return request.mode === "component" ? { component: null } : { state: null };
   }
 
   const componentName = request.componentName ?? "";
-  const match = findComponent(fiberRoot, componentName, []);
+  const match = findComponent(fiberRoot, componentName, [], []);
   if (!match) {
-    return { state: null };
+    return request.mode === "component" ? { component: null } : { state: null };
+  }
+
+  if (request.mode === "component") {
+    return {
+      component: {
+        name: getComponentName(match.fiber),
+        props: serializeProps(match.fiber.memoizedProps),
+        path: match.path,
+        childrenCount: countDirectChildren(match.fiber),
+        contexts: extractContexts(match.fiber, match.pathFibers),
+      },
+    };
   }
 
   return {
@@ -61,23 +79,26 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
   function findComponent(
     fiber: unknown,
     componentName: string,
-    pathNames: string[]
-  ): { fiber: FiberLike; path: string[] } | null {
+    pathNames: string[],
+    pathFibers: FiberLike[]
+  ): { fiber: FiberLike; path: string[]; pathFibers: FiberLike[] } | null {
     if (!isFiber(fiber)) return null;
 
     const name = getComponentName(fiber);
     const currentPath = [...pathNames, name];
+    const currentPathFibers = [...pathFibers, fiber];
 
     if (name === componentName) {
       return {
         fiber,
         path: currentPath,
+        pathFibers: currentPathFibers,
       };
     }
 
     let child = fiber.child;
     while (child) {
-      const match = findComponent(child, componentName, currentPath);
+      const match = findComponent(child, componentName, currentPath, currentPathFibers);
       if (match) return match;
       child = child.sibling;
     }
@@ -143,6 +164,52 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     return null;
   }
 
+  function extractContexts(fiber: FiberLike, pathFibers: FiberLike[]): ComponentContextValue[] {
+    const fromDependencies: ComponentContextValue[] = [];
+    const dependencySeen = new Set<string>();
+    let current = fiber.dependencies?.firstContext ?? null;
+
+    while (current && typeof current === "object") {
+      const name = getContextName((current as DependencyLike).context);
+      if (!dependencySeen.has(name)) {
+        dependencySeen.add(name);
+        fromDependencies.push({
+          name,
+          source: "dependency",
+          value: serializeValue((current as DependencyLike).memoizedValue),
+        });
+      }
+      current = (current as DependencyLike).next ?? null;
+    }
+
+    if (fromDependencies.length > 0) {
+      return fromDependencies;
+    }
+
+    const providers: ComponentContextValue[] = [];
+    for (const pathFiber of pathFibers) {
+      if (!isContextProviderFiber(pathFiber)) continue;
+      providers.push({
+        name: getContextName(getFiberContextObject(pathFiber)),
+        source: "provider",
+        value: serializeValue(pathFiber.memoizedProps?.value),
+      });
+    }
+
+    return providers;
+  }
+
+  function serializeProps(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== "object") return {};
+    const props = value as Record<string, unknown>;
+    const serialized: Record<string, unknown> = {};
+    for (const key of Object.keys(props)) {
+      if (key === "children") continue;
+      serialized[key] = serializeValue(props[key]);
+    }
+    return serialized;
+  }
+
   function serializeValue(value: unknown): unknown {
     if (value === null || value === undefined) return value;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
@@ -194,11 +261,32 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     return count;
   }
 
+  function isContextProviderFiber(fiber: FiberLike): boolean {
+    return fiber.tag === 10 && typeof fiber.memoizedProps === "object" && fiber.memoizedProps !== null && "value" in fiber.memoizedProps;
+  }
+
+  function getFiberContextObject(fiber: FiberLike): unknown {
+    if (!fiber.type || typeof fiber.type !== "object") return null;
+    const typeRecord = fiber.type as Record<string, unknown>;
+    return typeRecord._context ?? typeRecord.context ?? null;
+  }
+
+  function getContextName(context: unknown): string {
+    if (!context || typeof context !== "object") return "AnonymousContext";
+    const contextRecord = context as Record<string, unknown>;
+    const displayName = contextRecord.displayName;
+    if (typeof displayName === "string" && displayName.trim().length > 0) return displayName;
+    return "AnonymousContext";
+  }
+
   function getComponentName(fiber: FiberLike): string {
     if (typeof fiber.type === "string") return fiber.type;
     if (typeof fiber.type === "function") {
       const component = fiber.type as { displayName?: string; name?: string };
       return component.displayName || component.name || "Anonymous";
+    }
+    if (fiber.tag === 10) {
+      return `${getContextName(getFiberContextObject(fiber))}.Provider`;
     }
     if (fiber.tag === 3) return "HostRoot";
     if (fiber.type && typeof fiber.type === "object") {
@@ -227,11 +315,21 @@ type FiberLike = {
   return?: FiberLike | null;
   child?: FiberLike | null;
   sibling?: FiberLike | null;
+  memoizedProps?: Record<string, unknown> | null;
   memoizedState?: unknown;
+  dependencies?: {
+    firstContext?: DependencyLike | null;
+  } | null;
 };
 
 type HookLike = {
   memoizedState?: unknown;
   queue?: unknown;
   next?: HookLike | null;
+};
+
+type DependencyLike = {
+  context?: unknown;
+  memoizedValue?: unknown;
+  next?: DependencyLike | null;
 };

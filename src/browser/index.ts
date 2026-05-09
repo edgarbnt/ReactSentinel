@@ -794,8 +794,13 @@ export class BrowserManager {
     try {
       const page = await this.getRuntimePage(url);
 
-      const { inspectReactComponent } = await import("../diagnostics/react-inspector.js");
-      const componentNode = await page.evaluate(inspectReactComponent, componentName);
+      const { inspectReactRuntime } = await import("../diagnostics/react-runtime.js");
+      const request: ReactRuntimeInspectRequest = {
+        mode: "component",
+        componentName,
+      };
+      const result = await page.evaluate(inspectReactRuntime, request);
+      const componentNode = result.component ?? null;
 
       return {
         url: await page.evaluate(() => document.URL),
