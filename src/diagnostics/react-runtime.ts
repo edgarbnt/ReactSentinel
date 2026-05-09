@@ -2,23 +2,42 @@ import type {
   ComponentContextValue,
   ComponentHookValue,
   ComponentInspectionNode,
+  ComponentInspectionSummary,
   ComponentStateNode,
+  ReactTreeNode,
 } from "./protocol.js";
 
 export interface ReactRuntimeInspectRequest {
-  mode: "component" | "component-state";
+  mode: "tree" | "component" | "component-state";
   componentName?: string;
+  maxDepth?: number;
+  includeHostNodes?: boolean;
+  compact?: boolean;
 }
 
 export interface ReactRuntimeInspectResult {
+  tree?: ReactTreeNode | null;
   component?: ComponentInspectionNode | null;
   state?: ComponentStateNode | null;
 }
 
 export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactRuntimeInspectResult {
+  const maxObjectKeys = request.compact ? 6 : Number.POSITIVE_INFINITY;
+  const maxArrayLength = request.compact ? 4 : Number.POSITIVE_INFINITY;
+
   const fiberRoot = findRootFiber();
   if (!fiberRoot) {
-    return request.mode === "component" ? { component: null } : { state: null };
+    return request.mode === "tree" ? { tree: null } : request.mode === "component" ? { component: null } : { state: null };
+  }
+
+  if (request.mode === "tree") {
+    return {
+      tree: extractTree(
+        fiberRoot,
+        typeof request.maxDepth === "number" ? request.maxDepth : 10,
+        request.includeHostNodes === true
+      ),
+    };
   }
 
   const componentName = request.componentName ?? "";
@@ -28,25 +47,10 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
   }
 
   if (request.mode === "component") {
-    return {
-      component: {
-        name: getComponentName(match.fiber),
-        props: serializeProps(match.fiber.memoizedProps),
-        path: match.path,
-        childrenCount: countDirectChildren(match.fiber),
-        contexts: extractContexts(match.fiber, match.pathFibers),
-      },
-    };
+    return { component: buildInspectionNode(match) };
   }
 
-  return {
-    state: {
-      name: getComponentName(match.fiber),
-      path: match.path,
-      childrenCount: countDirectChildren(match.fiber),
-      hooks: extractHooks(match.fiber),
-    },
-  };
+  return { state: buildStateNode(match) };
 
   function findRootFiber(): unknown | null {
     const root = document.getElementById("root");
@@ -74,6 +78,49 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     }
 
     return currentFiber;
+  }
+
+  function extractTree(
+    fiber: unknown,
+    maxDepth: number,
+    includeHostNodes: boolean,
+    currentDepth: number = 0
+  ): ReactTreeNode | null {
+    const nodes = walkTree(fiber, maxDepth, includeHostNodes, currentDepth);
+    return nodes[0] ?? null;
+  }
+
+  function walkTree(
+    fiber: unknown,
+    maxDepth: number,
+    includeHostNodes: boolean,
+    currentDepth: number
+  ): ReactTreeNode[] {
+    if (!isFiber(fiber) || currentDepth >= maxDepth || fiber.tag === 6) {
+      return [];
+    }
+
+    const isHostComponent = typeof fiber.type === "string" || fiber.tag === 5;
+    const shouldInclude = includeHostNodes || !isHostComponent;
+
+    const childNodes: ReactTreeNode[] = [];
+    let child = fiber.child;
+    while (child) {
+      childNodes.push(...walkTree(child, maxDepth, includeHostNodes, currentDepth + 1));
+      child = child.sibling;
+    }
+
+    if (!shouldInclude) {
+      return childNodes;
+    }
+
+    return [
+      {
+        name: getComponentName(fiber),
+        props: serializeProps(fiber.memoizedProps),
+        children: childNodes,
+      },
+    ];
   }
 
   function findComponent(
@@ -104,6 +151,56 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     }
 
     return null;
+  }
+
+  function buildInspectionNode(match: {
+    fiber: FiberLike;
+    path: string[];
+    pathFibers: FiberLike[];
+  }): ComponentInspectionNode {
+    const props = serializeProps(match.fiber.memoizedProps);
+    const contexts = extractContexts(match.fiber, match.pathFibers);
+    return {
+      name: getComponentName(match.fiber),
+      props,
+      path: match.path,
+      pathText: match.path.join(" > "),
+      childrenCount: countDirectChildren(match.fiber),
+      contexts,
+      summary: buildSummary(match.path, props, extractHooks(match.fiber), contexts, countDirectChildren(match.fiber)),
+    };
+  }
+
+  function buildStateNode(match: {
+    fiber: FiberLike;
+    path: string[];
+    pathFibers: FiberLike[];
+  }): ComponentStateNode {
+    const hooks = extractHooks(match.fiber);
+    return {
+      name: getComponentName(match.fiber),
+      path: match.path,
+      pathText: match.path.join(" > "),
+      childrenCount: countDirectChildren(match.fiber),
+      hooks,
+      summary: buildSummary(match.path, serializeProps(match.fiber.memoizedProps), hooks, extractContexts(match.fiber, match.pathFibers), countDirectChildren(match.fiber)),
+    };
+  }
+
+  function buildSummary(
+    path: string[],
+    props: Record<string, unknown>,
+    hooks: ComponentHookValue[],
+    contexts: ComponentContextValue[],
+    childrenCount: number
+  ): ComponentInspectionSummary {
+    return {
+      pathText: path.join(" > "),
+      propKeys: Object.keys(props),
+      hookCount: hooks.length,
+      contextCount: contexts.length,
+      childrenCount,
+    };
   }
 
   function extractHooks(fiber: FiberLike): ComponentHookValue[] {
@@ -143,7 +240,7 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
       };
     }
 
-    if (Array.isArray(value) && value.length === 2 && Array.isArray(value[1])) {
+    if (Array.isArray(value) && value.length == 2 && Array.isArray(value[1])) {
       return {
         index,
         kind: "memo",
@@ -202,10 +299,13 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
   function serializeProps(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== "object") return {};
     const props = value as Record<string, unknown>;
+    const keys = Object.keys(props).filter((key) => key !== "children").slice(0, maxObjectKeys);
     const serialized: Record<string, unknown> = {};
-    for (const key of Object.keys(props)) {
-      if (key === "children") continue;
+    for (const key of keys) {
       serialized[key] = serializeValue(props[key]);
+    }
+    if (Object.keys(props).filter((key) => key !== "children").length > keys.length) {
+      serialized.__truncatedKeys = Object.keys(props).filter((key) => key !== "children").length - keys.length;
     }
     return serialized;
   }
@@ -218,7 +318,9 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
       return `[Function:${fn.name || "anonymous"}]`;
     }
     if (Array.isArray(value)) {
-      return value.map((entry) => serializeValue(entry));
+      const items = value.slice(0, maxArrayLength).map((entry) => serializeValue(entry));
+      if (value.length > items.length) items.push(`[+${value.length - items.length} more items]`);
+      return items;
     }
     if (typeof value === "object") {
       if (isReactElementLike(value)) {
@@ -226,10 +328,14 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
       }
 
       const record = value as Record<string, unknown>;
+      const keys = Object.keys(record).slice(0, maxObjectKeys);
       const serialized: Record<string, unknown> = {};
-      for (const key of Object.keys(record)) {
-        if (key === "children") continue;
+      for (const key of keys) {
+        if (key == "children") continue;
         serialized[key] = serializeValue(record[key]);
+      }
+      if (Object.keys(record).length > keys.length) {
+        serialized.__truncatedKeys = Object.keys(record).length - keys.length;
       }
       return serialized;
     }
@@ -243,6 +349,10 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     if (typeof type === "function") {
       const fn = type as { displayName?: string; name?: string };
       return fn.displayName || fn.name || "Anonymous";
+    }
+    if (type && typeof type === "object") {
+      const typeRecord = type as Record<string, unknown>;
+      if (typeof typeRecord.displayName === "string") return typeRecord.displayName;
     }
     return "Unknown";
   }

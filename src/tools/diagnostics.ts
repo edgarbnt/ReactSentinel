@@ -8,8 +8,15 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { browserManager } from "../browser/index.js";
+import type { InspectionResponseMode } from "../diagnostics/protocol.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
+
+const inspectionResponseModeSchema = z
+  .enum(["full", "compact"])
+  .optional()
+  .default("full")
+  .describe("Choose 'compact' to aggressively trim long inspection payloads for AI consumption.");
 
 export function register(server: McpServer): void {
   // -------------------------------------------------------------------------
@@ -84,7 +91,9 @@ export function register(server: McpServer): void {
     "inspect_component",
     [
       "Search the React Fiber tree for a specific component by name and extract",
-      "its full details, including props, path in the tree, and children count.",
+      "its details for AI inspection, including props, path in the tree,",
+      "provider or consumed contexts, children count, and a compact summary.",
+      "Use responseMode='compact' when you want a shorter payload.",
     ].join(" "),
     {
       url: z
@@ -95,10 +104,11 @@ export function register(server: McpServer): void {
         .string()
         .min(1)
         .describe("Name of the React component to inspect (e.g. 'TodoItem')."),
+      responseMode: inspectionResponseModeSchema,
     },
-    async ({ url, componentName }): Promise<ToolResponse> => {
+    async ({ url, componentName, responseMode = "full" }): Promise<ToolResponse> => {
       try {
-        const result = await browserManager.inspectComponent(url, componentName);
+        const result = await browserManager.inspectComponent(url, componentName, responseMode as InspectionResponseMode);
         if ("error" in result) return err(result.error);
         return ok(result);
       } catch (e) {
@@ -115,6 +125,7 @@ export function register(server: McpServer): void {
     [
       "Inspect a specific React component and return its serializable hook state.",
       "Useful for checking simple useState/useRef/useMemo values without reading source code.",
+      "Use responseMode='compact' when you want a shorter payload for AI analysis.",
     ].join(" "),
     {
       url: z
@@ -125,10 +136,11 @@ export function register(server: McpServer): void {
         .string()
         .min(1)
         .describe("Name of the React component whose hook state should be extracted."),
+      responseMode: inspectionResponseModeSchema,
     },
-    async ({ url, componentName }): Promise<ToolResponse> => {
+    async ({ url, componentName, responseMode = "full" }): Promise<ToolResponse> => {
       try {
-        const result = await browserManager.getComponentState(url, componentName);
+        const result = await browserManager.getComponentState(url, componentName, responseMode as InspectionResponseMode);
         if ("error" in result) return err(result.error);
         return ok(result);
       } catch (e) {

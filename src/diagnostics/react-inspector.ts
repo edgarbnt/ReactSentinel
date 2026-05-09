@@ -100,8 +100,16 @@ export function inspectReactComponent(componentName: string): ComponentInspectio
         name,
         props: serializeDeepProps(fiber.memoizedProps) || {},
         path: currentPath,
+        pathText: currentPath.join(" > "),
         childrenCount: countDirectChildren(fiber),
         contexts: [],
+        summary: {
+          pathText: currentPath.join(" > "),
+          propKeys: Object.keys((serializeDeepProps(fiber.memoizedProps) || {}) as Record<string, unknown>),
+          hookCount: 0,
+          contextCount: 0,
+          childrenCount: countDirectChildren(fiber),
+        },
       };
     }
 
