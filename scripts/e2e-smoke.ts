@@ -26,6 +26,7 @@ const expectedTools = [
   "inspect_component",
   "get_component_state",
   "get_render_counts",
+  "get_render_hotspots",
   "get_console_events",
   "get_runtime_timeline",
   "get_network_events",
@@ -72,6 +73,7 @@ async function main(): Promise<void> {
     assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
+    assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
     checks.push("get_server_info:ok");
 
     const echo = expectToolSuccess(await callTool(client, "echo", { message: "react-sentinel-e2e" }), "echo") as {
@@ -222,6 +224,29 @@ async function main(): Promise<void> {
       "get_render_counts did not observe InfiniteLoopScenario renders."
     );
     checks.push("get_render_counts:ok");
+
+    const renderHotspots = expectToolSuccess(
+      await callTool(client, "get_render_hotspots", {
+        url: demoUrl,
+        threshold: 4,
+        windowMs: 2000,
+        limit: 10,
+      }),
+      "get_render_hotspots"
+    ) as {
+      hotspots: { componentName: string; probableCause: { type: string; summary: string } }[];
+    };
+    assert(
+      renderHotspots.hotspots.some(
+        (entry) =>
+          entry.componentName === "InfiniteLoopScenario" &&
+          ["unstable_state", "unstable_hook_value", "unstable_props", "repeated_effect"].includes(
+            entry.probableCause.type
+          )
+      ),
+      "get_render_hotspots did not flag InfiniteLoopScenario with a probable cause."
+    );
+    checks.push("get_render_hotspots:ok");
 
     const replayInteractions = expectToolSuccess(
       await callTool(client, "replay_interactions", {

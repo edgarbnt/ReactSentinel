@@ -66,6 +66,7 @@ server.tool(
           get_runtime_status: "available",
           get_component_state: "available",
           get_render_counts: "available",
+          get_render_hotspots: "available",
           get_network_events: "available",
           get_runtime_timeline: "available",
           runtime_inspection: "available",

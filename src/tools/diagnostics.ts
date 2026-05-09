@@ -182,6 +182,53 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_render_hotspots
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_render_hotspots",
+    [
+      "List components that rendered too many times in a short window.",
+      "Use the threshold and window to detect likely render explosions and get a probable-cause hint.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      threshold: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Minimum render count inside the time window before a component is flagged. Default is 8."),
+      windowMs: z
+        .number()
+        .int()
+        .min(100)
+        .max(30_000)
+        .optional()
+        .describe("Size of the sliding window used to detect rapid rerenders. Default is 1000ms."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe("Maximum number of hotspots to return. Default is 20."),
+    },
+    async ({ url, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_render_hotspots failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_console_events
   // -------------------------------------------------------------------------
   server.tool(
