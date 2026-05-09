@@ -12,7 +12,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit && echo '✅ Type-check passed'"
+    "check": "tsc --noEmit && echo '✅ Type-check passed'",
+    "e2e:smoke": "tsx scripts/e2e-smoke.ts",
+    "e2e:diagnose": "RS_E2E_URL=http://127.0.0.1:4173 tsx scripts/e2e-diagnose.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.11.0",
