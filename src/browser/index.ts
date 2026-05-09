@@ -1235,14 +1235,16 @@ export class BrowserManager {
         };
       }
 
+      const stepTimeoutMs = step.timeoutMs ?? 3_000;
+
       if (step.action === "press") {
         if (step.selector) {
           await page.waitForSelector(step.selector, {
             state: "visible",
-            timeout: step.timeoutMs ?? 3_000,
+            timeout: stepTimeoutMs,
           });
           await page.locator(step.selector).press(step.key, {
-            timeout: step.timeoutMs ?? 3_000,
+            timeout: stepTimeoutMs,
           });
         } else {
           await page.keyboard.press(step.key);
@@ -1257,17 +1259,17 @@ export class BrowserManager {
 
       await page.waitForSelector(step.selector, {
         state: "visible",
-        timeout: step.timeoutMs ?? 3_000,
+        timeout: stepTimeoutMs,
       });
 
       const element = page.locator(step.selector);
       if (step.action === "click") {
         await element.click({
-          timeout: step.timeoutMs ?? 3_000,
+          timeout: stepTimeoutMs,
         });
       } else {
         await element.fill(step.value, {
-          timeout: step.timeoutMs ?? 3_000,
+          timeout: stepTimeoutMs,
         });
       }
 
