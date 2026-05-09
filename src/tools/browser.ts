@@ -32,7 +32,7 @@ const replayWaitUntilSchema = z
 
 export function register(server: McpServer): void {
   // -------------------------------------------------------------------------
-  // Tool: get_attach_status
+  // Tool: get_session_status
   // -------------------------------------------------------------------------
   server.tool(
     "get_session_status",
