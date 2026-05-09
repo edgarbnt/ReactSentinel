@@ -160,24 +160,30 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     if (!isFiber(fiber)) return null;
 
     const name = getComponentName(fiber);
-    const currentPath = [...pathNames, name];
-    const currentPathFibers = [...pathFibers, fiber];
+    pathNames.push(name);
+    pathFibers.push(fiber);
 
     if (name === componentName) {
       return {
         fiber,
-        path: currentPath,
-        pathFibers: currentPathFibers,
+        path: pathNames.slice(),
+        pathFibers: pathFibers.slice(),
       };
     }
 
     let child = fiber.child;
     while (child) {
-      const match = findComponent(child, componentName, currentPath, currentPathFibers);
-      if (match) return match;
+      const match = findComponent(child, componentName, pathNames, pathFibers);
+      if (match) {
+        pathNames.pop();
+        pathFibers.pop();
+        return match;
+      }
       child = child.sibling;
     }
 
+    pathNames.pop();
+    pathFibers.pop();
     return null;
   }
 
