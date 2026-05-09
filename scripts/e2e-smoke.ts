@@ -25,6 +25,7 @@ const expectedTools = [
   "get_react_tree",
   "inspect_component",
   "get_component_state",
+  "get_render_counts",
   "get_console_events",
   "get_runtime_timeline",
   "get_network_events",
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
     };
     assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
+    assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     checks.push("get_server_info:ok");
 
     const echo = expectToolSuccess(await callTool(client, "echo", { message: "react-sentinel-e2e" }), "echo") as {
@@ -193,6 +195,33 @@ async function main(): Promise<void> {
     ) as { validation: { pass: boolean } };
     assert(validateAfterAction.validation.pass === true, "validate_after_action did not validate the accent toggle.");
     checks.push("validate_after_action:ok");
+
+    const renderLoopReplay = expectToolSuccess(
+      await callTool(client, "replay_interactions", {
+        url: demoUrl,
+        steps: [
+          { action: "click", selector: "#render-loop-start-button" },
+          { action: "wait", durationMs: 400 },
+        ],
+      }),
+      "replay_interactions(render-loop)"
+    ) as { success: boolean };
+    assert(renderLoopReplay.success === true, "render loop replay failed.");
+    checks.push("render-loop:ok");
+
+    const renderCounts = expectToolSuccess(
+      await callTool(client, "get_render_counts", { url: demoUrl, limit: 20 }),
+      "get_render_counts"
+    ) as {
+      counts: { componentName: string; count: number }[];
+      summary: { totalComponents: number };
+    };
+    assert(renderCounts.summary.totalComponents >= 1, "get_render_counts reported no observed components.");
+    assert(
+      renderCounts.counts.some((entry) => entry.componentName === "InfiniteLoopScenario" && entry.count >= 4),
+      "get_render_counts did not observe InfiniteLoopScenario renders."
+    );
+    checks.push("get_render_counts:ok");
 
     const replayInteractions = expectToolSuccess(
       await callTool(client, "replay_interactions", {
