@@ -149,6 +149,39 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_render_counts
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_render_counts",
+    [
+      "Return per-component render counters collected by the replay runtime monitor.",
+      "Each entry includes the component name, path, render count, and first/last observation timestamps.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of component counters to return. Default is 50."),
+    },
+    async ({ url, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getRenderCounts(url, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_render_counts failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_console_events
   // -------------------------------------------------------------------------
   server.tool(
