@@ -120,7 +120,8 @@ export function register(server: McpServer): void {
   server.tool(
     "select_attach_tab",
     [
-      "Select one CDP page tab by index, URL, or title.",
+      "Preview or confirm one CDP page tab by index, URL, or title.",
+      "A matched tab is not activated for live browser mode until confirm is true.",
       "If no tab matches, the tool returns a structured 'not found' response.",
     ].join(" "),
     {
@@ -131,10 +132,17 @@ export function register(server: McpServer): void {
         .default(DEFAULT_CDP_ENDPOINT)
         .describe("Base CDP endpoint URL to inspect."),
       selector: attachTabSelectorSchema.describe("How to identify the tab to select."),
+      confirm: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Set to true to explicitly allow React-Sentinel to reuse the selected live browser tab."
+        ),
     },
-    async ({ endpoint, selector }): Promise<ToolResponse> => {
+    async ({ endpoint, selector, confirm }): Promise<ToolResponse> => {
       try {
-        const result = await browserManager.selectAttachTab(endpoint, selector);
+        const result = await browserManager.selectAttachTab(endpoint, selector, confirm);
         if ("error" in result) return err(result.error);
         return ok(result);
       } catch (e) {

@@ -148,7 +148,10 @@ export interface AttachTabSelectionResponse {
   selection: AttachTabSelector;
   matchedCount: number;
   found: boolean;
+  confirmed: boolean;
+  requiresConfirmation: boolean;
   selectedTab: AttachTabInfo | null;
+  candidateTab: AttachTabInfo | null;
   tabs: AttachTabInfo[];
   message: string;
 }
