@@ -109,6 +109,50 @@ export interface CdpVersionInfo {
   webSocketDebuggerUrl?: string;
 }
 
+export interface CdpTargetInfo {
+  id: string;
+  title: string;
+  url: string;
+  type: string;
+  webSocketDebuggerUrl?: string;
+  devtoolsFrontendUrl?: string;
+  faviconUrl?: string;
+  description?: string;
+  browserContextId?: string;
+}
+
+export interface AttachTabInfo extends CdpTargetInfo {
+  index: number;
+}
+
+export type AttachTabSelector =
+  | { kind: "index"; index: number }
+  | { kind: "url"; url: string }
+  | { kind: "title"; title: string };
+
+export interface AttachTabsResponse {
+  endpoint: string;
+  checkedAt: string;
+  total: number;
+  filters: {
+    url?: string;
+    title?: string;
+  };
+  tabs: AttachTabInfo[];
+  selectedTab: AttachTabInfo | null;
+}
+
+export interface AttachTabSelectionResponse {
+  endpoint: string;
+  checkedAt: string;
+  selection: AttachTabSelector;
+  matchedCount: number;
+  found: boolean;
+  selectedTab: AttachTabInfo | null;
+  tabs: AttachTabInfo[];
+  message: string;
+}
+
 export interface AttachStatus {
   endpoint: string;
   checkedAt: string;

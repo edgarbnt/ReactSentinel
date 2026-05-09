@@ -17,6 +17,11 @@ import type {
   PingData,
   AttachStatus,
   CdpVersionInfo,
+  CdpTargetInfo,
+  AttachTabInfo,
+  AttachTabSelector,
+  AttachTabsResponse,
+  AttachTabSelectionResponse,
   NetworkEvent,
   NetworkEventsResponse,
 } from "./protocol.js";
@@ -38,6 +43,7 @@ export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private attachSelection: { endpoint: string; tab: AttachTabInfo; selectedAt: string } | null = null;
 
   private consoleEvents: ConsoleEvent[] = [];
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
@@ -49,6 +55,70 @@ export class BrowserManager {
   };
   private static readonly cdpHelpMessage =
     "Launch Chrome with remote debugging, for example: google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-cdp";
+
+  private static normalizeText(value: string): string {
+    return value.trim().toLowerCase();
+  }
+
+  private static matchesText(value: string, query: string): boolean {
+    return BrowserManager.normalizeText(value).includes(BrowserManager.normalizeText(query));
+  }
+
+  private static normalizeAttachTabs(tabs: CdpTargetInfo[]): AttachTabInfo[] {
+    return tabs
+      .filter((tab) => tab.type === "page")
+      .map((tab, index) => ({
+        ...tab,
+        index,
+      }));
+  }
+
+  private async readCdpJson<T>(endpoint: string, path: string, timeoutMs: number = 2000): Promise<T | { error: string }> {
+    let targetUrl: string;
+
+    try {
+      targetUrl = new URL(path, endpoint).toString();
+    } catch {
+      return {
+        error: `Invalid CDP endpoint URL: ${endpoint}`,
+      };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(targetUrl, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        return {
+          error: `CDP endpoint responded with HTTP ${response.status}`,
+        };
+      }
+
+      try {
+        return (await response.json()) as T;
+      } catch {
+        return {
+          error: `CDP endpoint returned an invalid ${path} payload`,
+        };
+      }
+    } catch (error) {
+      return {
+        error:
+          error instanceof Error && error.name === "AbortError"
+            ? `Timed out after ${timeoutMs}ms while checking the CDP endpoint`
+            : error instanceof Error
+              ? error.message
+              : String(error),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   /** Launch a headless Chromium instance (idempotent). */
   async launch(): Promise<void> {
@@ -355,6 +425,110 @@ export class BrowserManager {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async getAttachTabs(
+    endpoint: string = DEFAULT_CDP_ENDPOINT,
+    urlFilter?: string,
+    titleFilter?: string
+  ): Promise<AttachTabsResponse | { error: string }> {
+    const checkedAt = new Date().toISOString();
+    const listOrError = await this.readCdpJson<CdpTargetInfo[]>(endpoint, "/json/list");
+
+    if ("error" in listOrError) {
+      return listOrError;
+    }
+
+    if (!Array.isArray(listOrError)) {
+      return {
+        error: "CDP endpoint returned an invalid /json/list payload",
+      };
+    }
+
+    const tabs = BrowserManager.normalizeAttachTabs(listOrError);
+    const filteredTabs = tabs.filter((tab) => {
+      const urlMatches =
+        !urlFilter || BrowserManager.matchesText(tab.url, urlFilter);
+      const titleMatches =
+        !titleFilter || BrowserManager.matchesText(tab.title, titleFilter);
+      return urlMatches && titleMatches;
+    });
+
+    const selectedTab =
+      this.attachSelection?.endpoint === endpoint
+        ? filteredTabs.find((tab) => tab.id === this.attachSelection?.tab.id) ?? null
+        : null;
+
+    return {
+      endpoint,
+      checkedAt,
+      total: filteredTabs.length,
+      filters: {
+        url: urlFilter,
+        title: titleFilter,
+      },
+      tabs: filteredTabs,
+      selectedTab,
+    };
+  }
+
+  async selectAttachTab(
+    endpoint: string = DEFAULT_CDP_ENDPOINT,
+    selector: AttachTabSelector
+  ): Promise<AttachTabSelectionResponse | { error: string }> {
+    const checkedAt = new Date().toISOString();
+    const listOrError = await this.readCdpJson<CdpTargetInfo[]>(endpoint, "/json/list");
+
+    if ("error" in listOrError) {
+      return listOrError;
+    }
+
+    if (!Array.isArray(listOrError)) {
+      return {
+        error: "CDP endpoint returned an invalid /json/list payload",
+      };
+    }
+
+    const tabs = BrowserManager.normalizeAttachTabs(listOrError);
+    const matches = tabs.filter((tab) => {
+      if (selector.kind === "index") {
+        return tab.index === selector.index;
+      }
+
+      if (selector.kind === "url") {
+        return BrowserManager.matchesText(tab.url, selector.url);
+      }
+
+      return BrowserManager.matchesText(tab.title, selector.title);
+    });
+
+    const selectedTab = matches[0] ?? null;
+
+    if (selectedTab) {
+      this.attachSelection = {
+        endpoint,
+        tab: selectedTab,
+        selectedAt: checkedAt,
+      };
+    }
+
+    return {
+      endpoint,
+      checkedAt,
+      selection: selector,
+      matchedCount: matches.length,
+      found: selectedTab !== null,
+      selectedTab,
+      tabs,
+      message:
+        selectedTab !== null
+          ? `Selected tab #${selectedTab.index}: ${selectedTab.title || selectedTab.url}`
+          : selector.kind === "index"
+            ? `No CDP tab found at index ${selector.index}.`
+            : selector.kind === "url"
+              ? `No CDP tab matched URL "${selector.url}".`
+              : `No CDP tab matched title "${selector.title}".`,
+    };
   }
 
   /** Evaluates a script in the context of the page. */
