@@ -667,7 +667,7 @@ export function readHookChangesState(
     componentName: target.componentName,
     pathText: target.pathText || null,
     found: true,
-    changes: changes.slice(0, limit),
+    changes: changes.slice(-limit),
     summary: {
       trackedRenders: samples.length,
       totalChanges: changes.length,
