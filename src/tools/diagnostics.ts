@@ -14,7 +14,6 @@ import type { ToolResponse } from "../types.js";
 
 const inspectionResponseModeSchema = z
   .enum(["full", "compact"])
-  .optional()
   .default("full")
   .describe("Choose 'compact' to aggressively trim long inspection payloads for AI consumption.");
 
