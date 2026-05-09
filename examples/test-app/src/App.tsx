@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TodoList } from "./components/TodoList";
 import { BuggySearch } from "./components/BuggySearch";
 import { DiagnosisApiScenario } from "./components/DiagnosisApiScenario";
+import { InfiniteLoopScenario } from "./components/InfiniteLoopScenario";
 import { MockApiScenario } from "./components/MockApiScenario";
 import { ThemeContextScenario } from "./components/ThemeContextScenario";
 
@@ -38,6 +39,7 @@ export default function App(): JSX.Element {
 
       <MockApiScenario />
       <DiagnosisApiScenario />
+      <InfiniteLoopScenario />
       <BuggySearch />
       <ThemeContextScenario />
       <TodoList />
