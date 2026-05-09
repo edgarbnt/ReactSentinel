@@ -332,99 +332,51 @@ export class BrowserManager {
     const help = BrowserManager.buildAttachHelpMessage();
     const timeoutMs = 2000;
 
-    let versionUrl: string;
-    try {
-      versionUrl = new URL("/json/version", endpoint).toString();
-    } catch {
+    const versionOrError = await this.readCdpJson<CdpVersionInfo>(endpoint, "/json/version", timeoutMs);
+
+    if ("error" in versionOrError) {
+      const { error } = versionOrError;
+      // Errors that indicate the server was reachable but returned an invalid response
+      const reachable =
+        error.startsWith("CDP endpoint responded with HTTP") ||
+        error.startsWith("CDP endpoint returned an invalid");
       return {
         endpoint,
         checkedAt,
         status: "attach_unavailable",
         ready: false,
-        reachable: false,
+        reachable,
         help,
-        error: `Invalid CDP endpoint URL: ${endpoint}`,
+        error,
       };
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const version = versionOrError;
 
-    try {
-      const response = await fetch(versionUrl, {
-        cache: "no-store",
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        return {
-          endpoint,
-          checkedAt,
-          status: "attach_unavailable",
-          ready: false,
-          reachable: true,
-          help,
-          error: `CDP endpoint responded with HTTP ${response.status}`,
-        };
-      }
-
-      let version: CdpVersionInfo;
-      try {
-        version = (await response.json()) as CdpVersionInfo;
-      } catch {
-        return {
-          endpoint,
-          checkedAt,
-          status: "attach_unavailable",
-          ready: false,
-          reachable: true,
-          help,
-          error: "CDP endpoint returned an invalid /json/version payload",
-        };
-      }
-
-      if (!version.webSocketDebuggerUrl) {
-        return {
-          endpoint,
-          checkedAt,
-          status: "attach_unavailable",
-          ready: false,
-          reachable: true,
-          help,
-          error: "CDP endpoint is reachable but does not expose webSocketDebuggerUrl",
-        };
-      }
-
+    if (!version.webSocketDebuggerUrl) {
       return {
         endpoint,
         checkedAt,
-        status: "attach_ready",
-        ready: true,
+        status: "attach_unavailable",
+        ready: false,
         reachable: true,
         help,
-        browser: version.Browser,
-        protocolVersion: version["Protocol-Version"],
-        userAgent: version["User-Agent"],
-        webSocketDebuggerUrl: version.webSocketDebuggerUrl,
+        error: "CDP endpoint is reachable but does not expose webSocketDebuggerUrl",
       };
-    } catch (error) {
-      return {
-        endpoint,
-        checkedAt,
-        status: "attach_unavailable",
-        ready: false,
-        reachable: false,
-        help,
-        error:
-          error instanceof Error && error.name === "AbortError"
-            ? `Timed out after ${timeoutMs}ms while checking the CDP endpoint`
-            : error instanceof Error
-              ? error.message
-              : String(error),
-      };
-    } finally {
-      clearTimeout(timer);
     }
+
+    return {
+      endpoint,
+      checkedAt,
+      status: "attach_ready",
+      ready: true,
+      reachable: true,
+      help,
+      browser: version.Browser,
+      protocolVersion: version["Protocol-Version"],
+      userAgent: version["User-Agent"],
+      webSocketDebuggerUrl: version.webSocketDebuggerUrl,
+    };
   }
 
   async getAttachTabs(
