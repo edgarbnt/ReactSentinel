@@ -326,6 +326,11 @@ export class BrowserManager {
 
     this.browser = await chromium.launch({ headless: this.replayHeadless });
     this.context = await this.browser.newContext();
+    
+    // Install runtime bridge on context to capture network events during initial page load
+    const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
+    await this.context.addInitScript({ content: installerSource });
+    
     this.page = await this.context.newPage();
 
     this.activateRuntimePage(this.page);
@@ -376,6 +381,13 @@ export class BrowserManager {
   private async installRuntimeBridge(page: Page): Promise<void> {
     const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
     await page.addInitScript({ content: installerSource });
+    await page.evaluate(installerSource);
+  }
+
+  private async ensureRuntimeBridgeOnPage(page: Page): Promise<void> {
+    // For pages from our replay context, the init script is already registered.
+    // We just need to evaluate it to ensure it's active on the current page state.
+    const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
     await page.evaluate(installerSource);
   }
 
@@ -610,7 +622,7 @@ export class BrowserManager {
         throw new Error(`Navigation to ${url} failed with HTTP ${response?.status() ?? "no response"}.`);
       }
 
-      await this.installRuntimeBridge(this.page!);
+      await this.ensureRuntimeBridgeOnPage(this.page!);
     }
 
     this.activateRuntimePage(this.page!);
