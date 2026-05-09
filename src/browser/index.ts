@@ -11,7 +11,7 @@
  */
 
 import { chromium } from "playwright";
-import type { Browser, BrowserContext, Page, ConsoleMessage } from "playwright";
+import type { Browser, BrowserContext, CDPSession, Page, ConsoleMessage } from "playwright";
 import type {
   Assertion,
   AssertionPrimitive,
@@ -31,6 +31,13 @@ import type {
   ReplayStep,
   ReplayStepResult,
   ReplayWaitUntil,
+  RuntimePatch,
+  RuntimePatchApplyResponse,
+  RuntimePatchExecutionResult,
+  RuntimePatchInfo,
+  RuntimePatchResetResponse,
+  RuntimePatchResetStrategy,
+  RuntimePatchTransport,
   SessionInfo,
   ValidationResult,
   ValidationScenarioResponse,
@@ -57,6 +64,18 @@ type RuntimeBridgeInitArgs = {
   networkBufferGlobalKey: string;
   networkBufferLimit: number;
   runtimeBridgeInstalledGlobalKey: string;
+};
+
+type NormalizedRuntimePatch = Omit<RuntimePatch, "metadata"> & {
+  metadata: RuntimePatch["metadata"] & {
+    id: string;
+  };
+};
+
+type RuntimePatchRecord = RuntimePatchInfo & {
+  initScriptIdentifier: string | null;
+  removable: boolean;
+  transport: RuntimePatchTransport;
 };
 
 function buildRuntimeBridgeSource(args: RuntimeBridgeInitArgs): string {
@@ -168,11 +187,14 @@ export class BrowserManager {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private replayHeadless = true;
+  private replaySessionId: number | null = null;
+  private nextReplaySessionId = 1;
   private attachedBrowser: Browser | null = null;
   private attachedPage: Page | null = null;
   private attachedEndpoint: string | null = null;
   private attachedTargetId: string | null = null;
   private attachSelection: { endpoint: string; tab: AttachTabInfo; selectedAt: string } | null = null;
+  private activeRuntimePatches: RuntimePatchRecord[] = [];
 
   private consoleEvents: ConsoleEvent[] = [];
   private runtimeEventPage: Page | null = null;
@@ -180,6 +202,9 @@ export class BrowserManager {
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
   private static readonly networkBufferLimit = 200;
   private static readonly runtimeBridgeInstalledGlobalKey = "__RS_RUNTIME_BRIDGE_INSTALLED__";
+  private static readonly runtimePatchStateGlobalKey = "__RS_RUNTIME_PATCH_STATE__";
+  private static readonly maxRuntimePatchSourceLength = 20_000;
+  private static readonly reservedRuntimePatchIds = new Set(["__proto__", "prototype", "constructor"]);
   private static readonly timelineSourceOrder: Record<RuntimeTimelineSource, number> = {
     console: 0,
     exception: 1,
@@ -268,6 +293,160 @@ export class BrowserManager {
     return path && path.trim().length > 0 ? path : "(root)";
   }
 
+  private static normalizeRuntimePatch(patch: RuntimePatch): NormalizedRuntimePatch | { error: string } {
+    const source = patch.source.trim();
+    if (patch.type !== "script") {
+      return {
+        error: `Unsupported runtime patch type "${patch.type}". Sprint 9 only supports "script".`,
+      };
+    }
+
+    if (patch.target !== "page") {
+      return {
+        error: `Unsupported runtime patch target "${patch.target}". Sprint 9 only supports "page".`,
+      };
+    }
+
+    if (!patch.metadata.expiresWithSession) {
+      return {
+        error: "Runtime patches must declare metadata.expiresWithSession = true.",
+      };
+    }
+
+    if (source.length === 0) {
+      return {
+        error: "Runtime patch source cannot be empty.",
+      };
+    }
+
+    if (source.length > BrowserManager.maxRuntimePatchSourceLength) {
+      return {
+        error: `Runtime patch source exceeds ${BrowserManager.maxRuntimePatchSourceLength} characters.`,
+      };
+    }
+
+    const rawId = patch.metadata.id?.trim();
+    const id =
+      rawId && rawId.length > 0
+        ? rawId
+        : `patch_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    if (BrowserManager.reservedRuntimePatchIds.has(id)) {
+      return {
+        error: `Runtime patch id "${id}" is reserved. Please use a different metadata.id value.`,
+      };
+    }
+    const label = patch.metadata.label?.trim();
+
+    return {
+      ...patch,
+      source,
+      metadata: {
+        ...patch.metadata,
+        id,
+        ...(label ? { label } : {}),
+      },
+    };
+  }
+
+  private static buildRuntimePatchExecutionSource(patch: NormalizedRuntimePatch): string {
+    return `(() => {
+      const patch = ${JSON.stringify(patch)};
+      const globalKey = ${JSON.stringify(BrowserManager.runtimePatchStateGlobalKey)};
+      const windowWithState = window;
+      const createActiveRegistry = (value) => {
+        const registry = Object.create(null);
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          for (const key of Object.keys(value)) {
+            registry[key] = value[key];
+          }
+        }
+        return registry;
+      };
+      const ensureState = () => {
+        const existing = Reflect.get(windowWithState, globalKey);
+        if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+          const activeValue = existing.active;
+          const activePrototype =
+            activeValue && typeof activeValue === "object" ? Object.getPrototypeOf(activeValue) : null;
+          if (
+            !activeValue ||
+            typeof activeValue !== "object" ||
+            Array.isArray(activeValue) ||
+            (activePrototype !== null && activePrototype !== Object.prototype)
+          ) {
+            existing.active = createActiveRegistry(activeValue);
+          } else if (activePrototype === Object.prototype) {
+            existing.active = createActiveRegistry(activeValue);
+          }
+          if (!Array.isArray(existing.errors)) {
+            existing.errors = [];
+          }
+          return existing;
+        }
+        const initialState = { active: createActiveRegistry(null), errors: [] };
+        Reflect.set(windowWithState, globalKey, initialState);
+        return initialState;
+      };
+      const toPreview = (value) => {
+        if (value === undefined || value === null) {
+          return null;
+        }
+        const valueType = typeof value;
+        if (valueType === "string" || valueType === "number" || valueType === "boolean") {
+          return value;
+        }
+        try {
+          return JSON.parse(JSON.stringify(value));
+        } catch {
+          return Object.prototype.toString.call(value);
+        }
+      };
+      const state = ensureState();
+      if (Object.prototype.hasOwnProperty.call(state.active, patch.metadata.id)) {
+        return {
+          status: "already_applied",
+          result: state.active[patch.metadata.id].result ?? null,
+        };
+      }
+      try {
+        const executor = new Function("window", "globalThis", "patch", patch.source);
+        const rawResult = executor(windowWithState, globalThis, patch);
+        const result = toPreview(rawResult);
+        state.active[patch.metadata.id] = {
+          appliedAt: new Date().toISOString(),
+          label: patch.metadata.label ?? null,
+          result,
+        };
+        return {
+          status: "applied",
+          result,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        state.errors.push({
+          patchId: patch.metadata.id,
+          message,
+          stack: error instanceof Error ? error.stack ?? null : null,
+          timestamp: new Date().toISOString(),
+        });
+        throw new Error("[runtime_patch:" + patch.metadata.id + "] " + message);
+      }
+    })();`;
+  }
+
+  private static buildRuntimePatchInfo(record: RuntimePatchRecord): RuntimePatchInfo {
+    return {
+      id: record.id,
+      type: record.type,
+      target: record.target,
+      label: record.label,
+      source: record.source,
+      appliedAt: record.appliedAt,
+      sessionId: record.sessionId,
+      scope: "replay_session",
+    };
+  }
+
   private async readCdpJson<T>(endpoint: string, path: string, timeoutMs: number = 2000): Promise<T | { error: string }> {
     let targetUrl: string;
 
@@ -326,6 +505,8 @@ export class BrowserManager {
 
     this.browser = await chromium.launch({ headless: this.replayHeadless });
     this.context = await this.browser.newContext();
+    this.replaySessionId = this.nextReplaySessionId++;
+    this.activeRuntimePatches = [];
     
     // Install runtime bridge on context to capture network events during initial page load
     const installerSource = buildRuntimeBridgeSource(BrowserManager.getRuntimeBridgeArgs());
@@ -400,6 +581,85 @@ export class BrowserManager {
     }
   }
 
+  private async ensureReplaySession(options?: {
+    headless?: boolean;
+    resetSession?: boolean;
+  }): Promise<Page> {
+    if (options?.resetSession) {
+      await this.closeReplaySession();
+    }
+
+    await this.launch(options?.headless);
+    this.activateRuntimePage(this.page!);
+    return this.page!;
+  }
+
+  private async navigatePage(
+    page: Page,
+    url: string,
+    waitUntil: ReplayWaitUntil,
+    timeoutMs: number
+  ): Promise<void> {
+    const currentUrl = page.url();
+    const normalizedCurrent = currentUrl.replace(/\/$/, "");
+    const normalizedTarget = url.replace(/\/$/, "");
+
+    if (normalizedCurrent === normalizedTarget && currentUrl !== "about:blank") {
+      await this.ensureRuntimeBridgeOnPage(page);
+      return;
+    }
+
+    this.consoleEvents = [];
+    let response;
+
+    try {
+      response = await page.goto(url, {
+        timeout: timeoutMs,
+        waitUntil,
+      });
+    } catch (error) {
+      throw new Error(this.formatNavigationError(error, url, timeoutMs));
+    }
+
+    if (!response || !response.ok()) {
+      throw new Error(`Navigation to ${url} failed with HTTP ${response?.status() ?? "no response"}.`);
+    }
+
+    await this.ensureRuntimeBridgeOnPage(page);
+  }
+
+  private async openPatchCdpSession(page: Page): Promise<CDPSession | null> {
+    try {
+      return await page.context().newCDPSession(page);
+    } catch {
+      return null;
+    }
+  }
+
+  private async removeRuntimePatchInitScripts(page: Page, patches: RuntimePatchRecord[]): Promise<void> {
+    const removablePatches = patches.filter((patch) => typeof patch.initScriptIdentifier === "string");
+    if (removablePatches.length === 0) {
+      return;
+    }
+
+    const cdpSession = await this.openPatchCdpSession(page);
+    if (!cdpSession) {
+      throw new Error("CDP removal is unavailable for the active replay page. Use strategy \"reset_session\" instead.");
+    }
+
+    try {
+      for (const patch of removablePatches) {
+        const identifier = patch.initScriptIdentifier;
+        if (!identifier) continue;
+        await cdpSession.send("Page.removeScriptToEvaluateOnNewDocument", {
+          identifier,
+        });
+      }
+    } finally {
+      await cdpSession.detach().catch(() => undefined);
+    }
+  }
+
   async getSessionInfo(): Promise<SessionInfo> {
     const attachPageUrl =
       this.attachedPage && !this.attachedPage.isClosed()
@@ -427,8 +687,14 @@ export class BrowserManager {
       title,
       replay: {
         active: this.page !== null && !this.page.isClosed(),
+        sessionId: this.replaySessionId,
         config: {
           headless: this.replayHeadless,
+        },
+        patches: {
+          activeCount: this.activeRuntimePatches.length,
+          patchIds: [...new Set(this.activeRuntimePatches.map((patch) => patch.id))],
+          sessionScoped: true,
         },
       },
       attach: {
@@ -449,6 +715,8 @@ export class BrowserManager {
       this.browser = null;
       this.context = null;
       this.page = null;
+      this.replaySessionId = null;
+      this.activeRuntimePatches = [];
 
       if (this.runtimeEventPage === replayPage) {
         this.runtimeEventPage = null;
@@ -594,39 +862,14 @@ export class BrowserManager {
       timeoutMs = 10_000,
       resetSession = false,
     } = options ?? {};
-    if (resetSession) {
-      await this.closeReplaySession();
-    }
+    const page = await this.ensureReplaySession({
+      headless,
+      resetSession,
+    });
 
-    await this.launch(headless);
-
-    const currentUrl = this.page!.url();
-    // Normalize urls to ignore trailing slashes
-    const normalizedCurrent = currentUrl.replace(/\/$/, "");
-    const normalizedTarget = url.replace(/\/$/, "");
-
-    if (normalizedCurrent !== normalizedTarget || currentUrl === "about:blank") {
-      this.consoleEvents = []; // Clear events on new navigation
-      let response;
-
-      try {
-        response = await this.page!.goto(url, {
-          timeout: timeoutMs,
-          waitUntil,
-        });
-      } catch (error) {
-        throw new Error(this.formatNavigationError(error, url, timeoutMs));
-      }
-
-      if (!response || !response.ok()) {
-        throw new Error(`Navigation to ${url} failed with HTTP ${response?.status() ?? "no response"}.`);
-      }
-
-      await this.ensureRuntimeBridgeOnPage(this.page!);
-    }
-
-    this.activateRuntimePage(this.page!);
-    return this.page!;
+    await this.navigatePage(page, url, waitUntil, timeoutMs);
+    this.activateRuntimePage(page);
+    return page;
   }
 
   private async getRuntimePage(url: string): Promise<Page> {
@@ -1275,6 +1518,209 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleError(e, url);
+    }
+  }
+
+  async applyRuntimePatch(
+    patch: RuntimePatch,
+    options?: {
+      url?: string;
+      headless?: boolean;
+      timeoutMs?: number;
+      waitUntil?: ReplayWaitUntil;
+      resetSession?: boolean;
+    }
+  ): Promise<RuntimePatchApplyResponse | { error: string }> {
+    const normalizedPatchOrError = BrowserManager.normalizeRuntimePatch(patch);
+    if ("error" in normalizedPatchOrError) {
+      return normalizedPatchOrError;
+    }
+
+    const waitUntil = options?.waitUntil ?? "domcontentloaded";
+    const timeoutMs = options?.timeoutMs ?? 10_000;
+    const normalizedPatch = normalizedPatchOrError;
+
+    try {
+      const page = await this.ensureReplaySession({
+        headless: options?.headless,
+        resetSession: options?.resetSession,
+      });
+
+      const sessionId = this.replaySessionId;
+      if (sessionId === null) {
+        return {
+          error: "No replay session is active for runtime patching.",
+        };
+      }
+
+      const duplicatePatch = this.activeRuntimePatches.find(
+        (candidate) => candidate.id === normalizedPatch.metadata.id && candidate.sessionId === sessionId
+      );
+      if (duplicatePatch) {
+        return {
+          error: `Runtime patch "${normalizedPatch.metadata.id}" is already active in replay session #${sessionId}. Reset patches first or choose a different patch id.`,
+        };
+      }
+
+      const executionSource = BrowserManager.buildRuntimePatchExecutionSource(normalizedPatch);
+      let transport: RuntimePatchTransport = "playwright";
+      let initScriptIdentifier: string | null = null;
+      const cdpSession = await this.openPatchCdpSession(page);
+
+      if (cdpSession) {
+        try {
+          const registration = (await cdpSession.send("Page.addScriptToEvaluateOnNewDocument", {
+            source: executionSource,
+          })) as { identifier?: string };
+          if (typeof registration.identifier === "string") {
+            initScriptIdentifier = registration.identifier;
+            transport = "cdp";
+          }
+        } finally {
+          await cdpSession.detach().catch(() => undefined);
+        }
+      }
+
+      if (initScriptIdentifier === null) {
+        await page.addInitScript({ content: executionSource });
+      }
+
+      if (options?.url) {
+        await this.navigatePage(page, options.url, waitUntil, timeoutMs);
+      } else {
+        await this.ensureRuntimeBridgeOnPage(page);
+      }
+
+      const currentDocument = await page.evaluate<RuntimePatchExecutionResult>(executionSource);
+      const record: RuntimePatchRecord = {
+        id: normalizedPatch.metadata.id,
+        type: normalizedPatch.type,
+        target: normalizedPatch.target,
+        label: normalizedPatch.metadata.label ?? null,
+        source: normalizedPatch.metadata.source,
+        appliedAt: new Date().toISOString(),
+        sessionId,
+        scope: "replay_session",
+        initScriptIdentifier,
+        removable: initScriptIdentifier !== null,
+        transport,
+      };
+      this.activeRuntimePatches.push(record);
+
+      return {
+        session: await this.getSessionInfo(),
+        url: await page.evaluate(() => document.URL),
+        patch: BrowserManager.buildRuntimePatchInfo(record),
+        transport,
+        initScriptRegistered: true,
+        currentDocument,
+        notes: [
+          `Patch is limited to replay session #${sessionId}.`,
+          transport === "cdp"
+            ? "Patch init script registered through CDP for future replay navigations."
+            : "Patch init script registered through Playwright. Use reset_session for the strongest cleanup guarantee.",
+        ],
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.closeReplaySession().catch(() => undefined);
+      return {
+        error: `Runtime patch application failed: ${message}. Replay session was reset to discard any partial patch state.`,
+      };
+    }
+  }
+
+  async resetRuntimePatches(
+    options?: {
+      strategy?: RuntimePatchResetStrategy;
+      waitUntil?: ReplayWaitUntil;
+      timeoutMs?: number;
+      headless?: boolean;
+      reopenUrl?: string;
+    }
+  ): Promise<RuntimePatchResetResponse | { error: string }> {
+    const strategy = options?.strategy ?? "reset_session";
+    const waitUntil = options?.waitUntil ?? "domcontentloaded";
+    const timeoutMs = options?.timeoutMs ?? 10_000;
+    const removedPatchIds = [...new Set(this.activeRuntimePatches.map((patch) => patch.id))];
+    const fallbackReopenUrl =
+      options?.reopenUrl ??
+      ((strategy === "reload" && this.page && !this.page.isClosed()) ? this.page.url() : null);
+
+    try {
+      if (strategy === "reload") {
+        const page = this.page && !this.page.isClosed() ? this.page : null;
+        const nonRemovablePatches = this.activeRuntimePatches.filter((patch) => !patch.removable);
+
+        if (page && nonRemovablePatches.length === 0) {
+          try {
+            let reopenedUrl: string | null = null;
+            await this.removeRuntimePatchInitScripts(page, this.activeRuntimePatches);
+            this.activeRuntimePatches = [];
+
+            const currentUrl = page.url();
+            const targetUrl = options?.reopenUrl ?? currentUrl;
+            if (targetUrl && targetUrl !== currentUrl) {
+              await this.navigatePage(page, targetUrl, waitUntil, timeoutMs);
+            } else if (targetUrl) {
+              await page.reload({
+                timeout: timeoutMs,
+                waitUntil,
+              });
+              await this.ensureRuntimeBridgeOnPage(page);
+            } else {
+              await page.goto("about:blank", {
+                timeout: timeoutMs,
+                waitUntil,
+              });
+              await this.ensureRuntimeBridgeOnPage(page);
+            }
+            reopenedUrl = page.url();
+
+            this.consoleEvents = [];
+            await this.clearNetworkEventsBuffer(page).catch(() => 0);
+
+            return {
+              session: await this.getSessionInfo(),
+              strategy,
+              removedPatchIds,
+              removedCount: removedPatchIds.length,
+              reopenedUrl,
+            };
+          } catch {
+            // Fall back to a full replay-session reset below.
+          }
+        }
+      }
+
+      await this.closeReplaySession();
+      let reopenedUrl: string | null = null;
+
+      const nextUrl = fallbackReopenUrl;
+      if (nextUrl && nextUrl !== "about:blank") {
+        const navigation = await this.navigateReplay(nextUrl, {
+          headless: options?.headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: false,
+        });
+        if ("error" in navigation) {
+          return navigation;
+        }
+        reopenedUrl = navigation.url;
+      }
+
+      return {
+        session: await this.getSessionInfo(),
+        strategy: "reset_session",
+        removedPatchIds,
+        removedCount: removedPatchIds.length,
+        reopenedUrl,
+      };
+    } catch (error) {
+      return {
+        error: `Failed to reset runtime patches: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
   }
 
