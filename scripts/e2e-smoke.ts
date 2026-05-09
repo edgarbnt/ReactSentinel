@@ -1,33 +1,16 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
-type ToolSuccess = {
-  ok: true;
-  data: unknown;
-};
-
-type ToolFailure = {
-  ok: false;
-  error: string;
-  raw: unknown;
-};
-
-type ToolOutcome = ToolSuccess | ToolFailure;
-
-type ManagedProcess = {
-  name: string;
-  child: ChildProcess;
-  logs: string[];
-};
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, "..");
-const demoUrl = process.env.RS_E2E_URL ?? "http://127.0.0.1:5173";
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+import type { ManagedProcess } from "./mcp-e2e-utils.js";
+import {
+  assert,
+  callTool,
+  connectMcpClient,
+  demoUrl,
+  ensureDemoApp,
+  expectToolFailure,
+  expectToolSuccess,
+  stopProcess,
+  stringifyError,
+} from "./mcp-e2e-utils.js";
 const expectedTools = [
   "ping",
   "get_server_info",
@@ -52,161 +35,7 @@ const expectedTools = [
   "apply_runtime_patch",
   "apply_patch_then_replay",
   "reset_runtime_patches",
-] as const;
-
-function assert(condition: unknown, message: string): asserts condition {
-  if (!condition) {
-    throw new Error(message);
-  }
-}
-
-function stringifyError(error: unknown): string {
-  return error instanceof Error ? error.stack || error.message : String(error);
-}
-
-function toEnvRecord(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string")
-  );
-}
-
-function attachLogs(processHandle: ManagedProcess, prefix: string, data: Buffer | string): void {
-  const text = String(data);
-  for (const line of text.split(/\r?\n/)) {
-    if (!line.trim()) continue;
-    const message = `[${prefix}] ${line}`;
-    processHandle.logs.push(message);
-  }
-}
-
-function createManagedProcess(name: string, child: ChildProcess): ManagedProcess {
-  const processHandle: ManagedProcess = {
-    name,
-    child,
-    logs: [],
-  };
-
-  child.stdout?.on("data", (chunk) => attachLogs(processHandle, `${name}:stdout`, chunk));
-  child.stderr?.on("data", (chunk) => attachLogs(processHandle, `${name}:stderr`, chunk));
-
-  return processHandle;
-}
-
-async function waitForHttp(url: string, timeoutMs: number): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError = "No response received yet.";
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url, { method: "GET" });
-      if (response.ok) {
-        return;
-      }
-      lastError = `HTTP ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error);
-    }
-
-    await delay(500);
-  }
-
-  throw new Error(`Timed out waiting for ${url}: ${lastError}`);
-}
-
-async function ensureDemoApp(processes: ManagedProcess[]): Promise<{ reused: boolean }> {
-  try {
-    await waitForHttp(demoUrl, 1500);
-    return { reused: true };
-  } catch {
-    const child = spawn(npmCommand, ["run", "dev", "--", "--host", "127.0.0.1"], {
-      cwd: path.join(repoRoot, "examples", "test-app"),
-      env: toEnvRecord(),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const managed = createManagedProcess("demo-app", child);
-    processes.push(managed);
-    await waitForHttp(demoUrl, 30_000);
-    return { reused: false };
-  }
-}
-
-function extractTextContent(result: unknown): string {
-  assert(typeof result === "object" && result !== null, "Tool result must be an object.");
-  const content = Reflect.get(result, "content");
-  assert(Array.isArray(content), "Tool result content is missing.");
-  const textItem = content.find(
-    (item): item is { type: "text"; text: string } =>
-      typeof item === "object" &&
-      item !== null &&
-      Reflect.get(item, "type") === "text" &&
-      typeof Reflect.get(item, "text") === "string"
-  );
-  assert(textItem, "Tool result does not contain text content.");
-  return textItem.text;
-}
-
-function parseToolPayload(result: unknown): ToolOutcome {
-  const text = extractTextContent(result);
-  try {
-    const parsed = JSON.parse(text) as { error?: boolean; message?: string };
-    if (parsed?.error === true) {
-      return {
-        ok: false,
-        error: typeof parsed.message === "string" ? parsed.message : text,
-        raw: parsed,
-      };
-    }
-    return {
-      ok: true,
-      data: parsed,
-    };
-  } catch {
-    return {
-      ok: true,
-      data: text,
-    };
-  }
-}
-
-function expectToolSuccess(outcome: ToolOutcome, toolName: string): unknown {
-  assert(outcome.ok, `${toolName} returned an error: ${outcome.error}`);
-  return outcome.data;
-}
-
-function expectToolFailure(outcome: ToolOutcome, toolName: string): ToolFailure {
-  assert(!outcome.ok, `${toolName} was expected to fail gracefully but succeeded.`);
-  return outcome;
-}
-
-async function callTool(
-  client: Client,
-  toolName: string,
-  args: Record<string, unknown> = {}
-): Promise<ToolOutcome> {
-  const result = await client.callTool({
-    name: toolName,
-    arguments: args,
-  });
-  return parseToolPayload(result);
-}
-
-async function stopProcess(processHandle: ManagedProcess): Promise<void> {
-  if (processHandle.child.exitCode !== null || processHandle.child.killed) {
-    return;
-  }
-
-  processHandle.child.kill("SIGTERM");
-  await Promise.race([
-    new Promise<void>((resolve) => {
-      processHandle.child.once("exit", () => resolve());
-    }),
-    delay(5000).then(() => {
-      if (processHandle.child.exitCode === null && !processHandle.child.killed) {
-        processHandle.child.kill("SIGKILL");
-      }
-    }),
-  ]);
-}
+];
 
 async function main(): Promise<void> {
   const managedProcesses: ManagedProcess[] = [];
@@ -218,27 +47,11 @@ async function main(): Promise<void> {
     const demo = await ensureDemoApp(managedProcesses);
     checks.push(`demo-app:${demo.reused ? "reused" : "started"}`);
 
-    const client = new Client({
+    const { client, transport: connectedTransport } = await connectMcpClient(serverLogs, {
       name: "react-sentinel-e2e-smoke",
       version: "0.1.0",
     });
-
-    transport = new StdioClientTransport({
-      command: process.execPath,
-      args: [path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), path.join(repoRoot, "src", "index.ts")],
-      cwd: repoRoot,
-      env: toEnvRecord(),
-      stderr: "pipe",
-    });
-
-    transport.stderr?.on("data", (chunk) => {
-      for (const line of String(chunk).split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        serverLogs.push(`[mcp-server] ${line}`);
-      }
-    });
-
-    await client.connect(transport);
+    transport = connectedTransport;
     checks.push("mcp-connect:ok");
 
     const toolsResult = await client.listTools();

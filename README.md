@@ -71,6 +71,14 @@ npm run e2e:smoke
 
 This runner starts from the MCP client side, talks to the server over stdio, and verifies the end-to-end concept against the demo app. See [`docs/scenarios/e2e-smoke.md`](docs/scenarios/e2e-smoke.md) for the exact coverage.
 
+### 3c. Run the diagnosis-only benchmark
+
+```bash
+npm run e2e:diagnose
+```
+
+This benchmark verifies the "find the problem before fixing it" promise: the agent must reproduce a bug, inspect MCP runtime signals, and conclude on the root cause without editing the app. See [`docs/scenarios/diagnosis-benchmark.md`](docs/scenarios/diagnosis-benchmark.md).
+
 ### 4. Connect your MCP client
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
