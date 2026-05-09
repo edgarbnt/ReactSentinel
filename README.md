@@ -83,7 +83,7 @@ google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-c
 
 Then call `get_attach_status` to check whether the CDP endpoint is reachable. If it is not, the tool returns a clear error plus the launch command above.
 
-Once the endpoint is ready, use `get_attach_tabs` to list the available page tabs and `select_attach_tab` to pick one by index, URL, or title.
+Once the endpoint is ready, use `get_attach_tabs` to list the available page tabs and `select_attach_tab` to pick one by index, URL, or title. After a tab is selected, the runtime inspection and interaction tools reuse that live tab instead of opening the isolated sandbox browser. If the tab closes, React-Sentinel clears the selection and asks you to choose a tab again.
 
 ## Available scripts
 
