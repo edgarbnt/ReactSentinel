@@ -15,6 +15,8 @@ import type { Browser, BrowserContext, Page, ConsoleMessage } from "playwright";
 import type {
   BrowserResult,
   PingData,
+  AttachStatus,
+  CdpVersionInfo,
   NetworkEvent,
   NetworkEventsResponse,
 } from "./protocol.js";
@@ -30,6 +32,8 @@ import type {
 } from "../diagnostics/protocol.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 
+export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
+
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -43,6 +47,8 @@ export class BrowserManager {
     exception: 1,
     network: 2,
   };
+  private static readonly cdpHelpMessage =
+    "Launch Chrome with remote debugging, for example: google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-cdp";
 
   /** Launch a headless Chromium instance (idempotent). */
   async launch(): Promise<void> {
@@ -243,6 +249,112 @@ export class BrowserManager {
     }
 
     return this.page!;
+  }
+
+  private static buildAttachHelpMessage(): string {
+    return BrowserManager.cdpHelpMessage;
+  }
+
+  async getAttachStatus(
+    endpoint: string = DEFAULT_CDP_ENDPOINT
+  ): Promise<AttachStatus> {
+    const checkedAt = new Date().toISOString();
+    const help = BrowserManager.buildAttachHelpMessage();
+    const timeoutMs = 2000;
+
+    let versionUrl: string;
+    try {
+      versionUrl = new URL("/json/version", endpoint).toString();
+    } catch {
+      return {
+        endpoint,
+        checkedAt,
+        status: "attach_unavailable",
+        ready: false,
+        reachable: false,
+        help,
+        error: `Invalid CDP endpoint URL: ${endpoint}`,
+      };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(versionUrl, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        return {
+          endpoint,
+          checkedAt,
+          status: "attach_unavailable",
+          ready: false,
+          reachable: true,
+          help,
+          error: `CDP endpoint responded with HTTP ${response.status}`,
+        };
+      }
+
+      let version: CdpVersionInfo;
+      try {
+        version = (await response.json()) as CdpVersionInfo;
+      } catch {
+        return {
+          endpoint,
+          checkedAt,
+          status: "attach_unavailable",
+          ready: false,
+          reachable: true,
+          help,
+          error: "CDP endpoint returned an invalid /json/version payload",
+        };
+      }
+
+      if (!version.webSocketDebuggerUrl) {
+        return {
+          endpoint,
+          checkedAt,
+          status: "attach_unavailable",
+          ready: false,
+          reachable: true,
+          help,
+          error: "CDP endpoint is reachable but does not expose webSocketDebuggerUrl",
+        };
+      }
+
+      return {
+        endpoint,
+        checkedAt,
+        status: "attach_ready",
+        ready: true,
+        reachable: true,
+        help,
+        browser: version.Browser,
+        protocolVersion: version["Protocol-Version"],
+        userAgent: version["User-Agent"],
+        webSocketDebuggerUrl: version.webSocketDebuggerUrl,
+      };
+    } catch (error) {
+      return {
+        endpoint,
+        checkedAt,
+        status: "attach_unavailable",
+        ready: false,
+        reachable: false,
+        help,
+        error:
+          error instanceof Error && error.name === "AbortError"
+            ? `Timed out after ${timeoutMs}ms while checking the CDP endpoint`
+            : error instanceof Error
+              ? error.message
+              : String(error),
+      };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Evaluates a script in the context of the page. */

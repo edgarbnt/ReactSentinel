@@ -7,11 +7,39 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { browserManager } from "../browser/index.js";
+import { browserManager, DEFAULT_CDP_ENDPOINT } from "../browser/index.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
 export function register(server: McpServer): void {
+  // -------------------------------------------------------------------------
+  // Tool: get_attach_status
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_attach_status",
+    [
+      "Check whether a Chrome instance exposes the CDP version endpoint at the",
+      "given URL. Returns a machine-readable attach readiness status",
+      "plus launch guidance when the endpoint is unavailable.",
+    ].join(" "),
+    {
+      endpoint: z
+        .string()
+        .url()
+        .optional()
+        .default(DEFAULT_CDP_ENDPOINT)
+        .describe("Base CDP endpoint URL to inspect (e.g. http://127.0.0.1:9222)."),
+    },
+    async ({ endpoint }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getAttachStatus(endpoint);
+        return ok(result);
+      } catch (e) {
+        return err(`get_attach_status failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
   // -------------------------------------------------------------------------
   // Tool: browser_ping
   // -------------------------------------------------------------------------
