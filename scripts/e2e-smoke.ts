@@ -27,6 +27,7 @@ const expectedTools = [
   "get_component_state",
   "get_render_counts",
   "get_render_hotspots",
+  "get_hook_changes",
   "get_console_events",
   "get_runtime_timeline",
   "get_network_events",
@@ -74,6 +75,7 @@ async function main(): Promise<void> {
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
+    assert(serverInfo.capabilities.get_hook_changes === "available", "get_hook_changes capability missing.");
     checks.push("get_server_info:ok");
 
     const echo = expectToolSuccess(await callTool(client, "echo", { message: "react-sentinel-e2e" }), "echo") as {
@@ -247,6 +249,28 @@ async function main(): Promise<void> {
       "get_render_hotspots did not flag InfiniteLoopScenario with a probable cause."
     );
     checks.push("get_render_hotspots:ok");
+
+    const hookChanges = expectToolSuccess(
+      await callTool(client, "get_hook_changes", {
+        url: demoUrl,
+        componentName: "InfiniteLoopScenario",
+        limit: 20,
+      }),
+      "get_hook_changes"
+    ) as {
+      found: boolean;
+      changes: { hookKind: string }[];
+      summary: { suspiciousHooks: { suspected: boolean }[]; probableCause: string };
+    };
+    assert(hookChanges.found === true, "get_hook_changes did not find InfiniteLoopScenario.");
+    assert(hookChanges.changes.length >= 1, "get_hook_changes returned no hook diffs.");
+    assert(
+      hookChanges.summary.suspiciousHooks.some((entry) => entry.suspected) ||
+        hookChanges.summary.probableCause.toLowerCase().includes("hook") ||
+        hookChanges.summary.probableCause.toLowerCase().includes("state"),
+      "get_hook_changes did not surface a probable unstable hook value."
+    );
+    checks.push("get_hook_changes:ok");
 
     const replayInteractions = expectToolSuccess(
       await callTool(client, "replay_interactions", {
