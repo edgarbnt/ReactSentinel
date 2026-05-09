@@ -1262,9 +1262,13 @@ export class BrowserManager {
 
       const element = page.locator(step.selector);
       if (step.action === "click") {
-        await element.click();
+        await element.click({
+          timeout: step.timeoutMs ?? 3_000,
+        });
       } else {
-        await element.fill(step.value);
+        await element.fill(step.value, {
+          timeout: step.timeoutMs ?? 3_000,
+        });
       }
 
       return {
