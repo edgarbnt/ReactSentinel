@@ -12,7 +12,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "check": "tsc --noEmit && echo '✅ Type-check passed'"
+    "check": "tsc --noEmit && echo '✅ Type-check passed'",
+    "e2e:smoke": "tsx scripts/e2e-smoke.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.11.0",

@@ -63,6 +63,14 @@ pnpm dev          # starts Vite on http://localhost:5173
 
 The test app is a minimal React 18 page used as a live inspection fixture.
 
+### 3b. Run the one-command E2E smoke test
+
+```bash
+npm run e2e:smoke
+```
+
+This runner starts from the MCP client side, talks to the server over stdio, and verifies the end-to-end concept against the demo app. See [`docs/scenarios/e2e-smoke.md`](docs/scenarios/e2e-smoke.md) for the exact coverage.
+
 ### 4. Connect your MCP client
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
