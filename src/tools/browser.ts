@@ -26,7 +26,64 @@ const attachTabSelectorSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+const replayWaitUntilSchema = z
+  .enum(["load", "domcontentloaded", "networkidle"])
+  .default("domcontentloaded");
+
 export function register(server: McpServer): void {
+  // -------------------------------------------------------------------------
+  // Tool: get_session_status
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_session_status",
+    [
+      "Return the current browser session mode used by React-Sentinel.",
+      "Reports whether tools will use the attached live tab or the isolated replay browser,",
+      "plus the current replay headless/headed configuration.",
+    ].join(" "),
+    {},
+    async (): Promise<ToolResponse> => {
+      try {
+        return ok(await browserManager.getSessionInfo());
+      } catch (e) {
+        return err(`get_session_status failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
+  // Tool: navigate_replay
+  // -------------------------------------------------------------------------
+  server.tool(
+    "navigate_replay",
+    [
+      "Navigate the isolated replay browser to a target URL and wait for the application to load.",
+      "Supports configurable waitUntil, timeout, and headless/headed replay mode.",
+      "Returns readable navigation errors plus the active session metadata.",
+    ].join(" "),
+    {
+      url: z.string().url().describe("Target URL for the replay browser."),
+      waitUntil: replayWaitUntilSchema.describe("Playwright readiness event to wait for before returning."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this navigation."),
+      resetSession: z.boolean().optional().default(false).describe("Close the current replay browser first and start a fresh isolated session."),
+    },
+    async ({ url, waitUntil, timeoutMs, headless, resetSession }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.navigateReplay(url, {
+          waitUntil,
+          timeoutMs,
+          headless,
+          resetSession,
+        });
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`navigate_replay failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
   // -------------------------------------------------------------------------
   // Tool: get_attach_status
   // -------------------------------------------------------------------------

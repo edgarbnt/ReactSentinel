@@ -9,8 +9,8 @@ React-Sentinel bridges AI terminals (Claude, Copilot CLI…) to a live browser r
 | Capability | Description |
 |---|---|
 | **Runtime Inspection** | Explore the React Fiber tree, inspect component props, extract simple hook values (`useState`, `useRef`, `useMemo`), surface React context values, and audit network or console signals live |
-| **Shadow Sandbox** | Inject ephemeral code patches into an isolated browser instance — no local files touched — then assert the fix worked |
-| **Interaction Simulation** | Drive the browser (click, fill, navigate) to reproduce bugs before attempting to fix them |
+| **Replay Sandbox** | Launch an isolated Playwright browser, navigate to a target app, and replay deterministic interaction sequences without touching the developer's live browser |
+| **Interaction Simulation** | Drive either the attached live tab or the replay browser (click, fill, press, navigate) to reproduce bugs before attempting to fix them |
 
 ## Stack
 
@@ -33,6 +33,12 @@ React-Sentinel bridges AI terminals (Claude, Copilot CLI…) to a live browser r
 ```bash
 # From the project root
 pnpm install
+```
+
+Playwright is already declared in the workspace dependencies. If Chromium is missing on a fresh machine, install it once with:
+
+```bash
+npx playwright install chromium
 ```
 
 ### 2. Start the MCP server (development mode)
@@ -85,6 +91,15 @@ Then call `get_attach_status` to check whether the CDP endpoint is reachable. If
 
 Once the endpoint is ready, use `get_attach_tabs` to list the available page tabs and `select_attach_tab` to pick one by index, URL, or title. The first `select_attach_tab` response is a consent preview: it explains that React-Sentinel will inspect the selected tab's runtime signals and may run interaction tools in that same tab. Re-run `select_attach_tab` with `confirm: true` to enable live browser mode for that tab. After consent is recorded, the runtime inspection and interaction tools reuse only that live tab instead of opening the isolated sandbox browser. If the tab closes, React-Sentinel clears the selection and asks you to choose a tab again.
 
+## Replay sandbox tools
+
+- `get_server_info` advertises `replay_sandbox` as available today and keeps `shadow_sandbox` as planned for the later shadow-patching milestone.
+- `get_session_status` reports whether React-Sentinel is currently using the live attached tab or the isolated replay browser, and exposes the replay headless/headed configuration.
+- `navigate_replay` opens the isolated replay browser, navigates to a URL, waits for `load`, `domcontentloaded`, or `networkidle`, and returns readable navigation errors when the target app is unavailable.
+- `replay_interactions` replays ordered `click`, `fill`, `wait`, and `press` steps in that replay browser and logs the result of each step.
+
+`navigate_replay` and `replay_interactions` accept `headless` so the same sandbox can run invisibly in automated flows or visibly in a local debugging session.
+
 ## Runtime inspection limits
 
 The hook/state inspector is intentionally bounded so responses stay readable for AI clients:
@@ -95,6 +110,15 @@ The hook/state inspector is intentionally bounded so responses stay readable for
 - **Truncation rules:** long strings, arrays, object keys, `Map`, `Set`, React elements, DOM elements, and cyclic values are shortened or replaced with explicit placeholders such as `[Circular]`, `[MaxDepthReached]`, `[MaxNodesReached]`, `[Function:...]`, `[ReactElement:...]`, and `[HTMLElement:...]`.
 
 These limits are by design: they keep the output stable and compact enough to be useful in the middle of a debugging session.
+
+## Attach vs replay limits
+
+React-Sentinel now exposes two browser session modes:
+
+- **Attach mode** reuses a developer-selected Chrome tab through CDP. It preserves the real browser state, cookies, and extensions, but it requires explicit consent and depends on the tab staying open.
+- **Replay mode** uses an isolated Playwright Chromium session. It is safer for deterministic reproduction and scripted replays, but it does not inherit the user's current browsing state unless the scenario rebuilds it step by step.
+
+Most runtime and interaction tools keep the same behavior in both modes because they resolve through the same runtime bridge. The main difference is which page is being driven: a real user tab in attach mode, or the isolated replay browser in replay mode.
 
 ## Available scripts
 
@@ -130,4 +154,4 @@ The integrated test app also contains dedicated Sprint 6 fixtures for:
 
 ## Status
 
-✅ **Sprint 6** — runtime inspection now covers React tree lookup, component inspection, hook extraction, context surfacing, network timeline diagnostics, live-tab attach mode, and browser interaction validation.
+✅ **Sprint 7** — runtime inspection now covers live-tab attach mode plus an isolated replay sandbox with explicit session status, configurable headless/headed navigation, and deterministic replay sequences.
