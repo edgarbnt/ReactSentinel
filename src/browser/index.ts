@@ -32,6 +32,8 @@ import type {
 } from "../diagnostics/protocol.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 
+export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
+
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -40,7 +42,6 @@ export class BrowserManager {
   private consoleEvents: ConsoleEvent[] = [];
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
   private static readonly networkBufferLimit = 200;
-  private static readonly defaultCdpEndpoint = "http://127.0.0.1:9222";
   private static readonly timelineSourceOrder: Record<RuntimeTimelineSource, number> = {
     console: 0,
     exception: 1,
@@ -255,14 +256,29 @@ export class BrowserManager {
   }
 
   async getAttachStatus(
-    endpoint: string = BrowserManager.defaultCdpEndpoint
+    endpoint: string = DEFAULT_CDP_ENDPOINT
   ): Promise<AttachStatus> {
     const checkedAt = new Date().toISOString();
-    const versionUrl = new URL("/json/version", endpoint).toString();
+    const help = BrowserManager.buildAttachHelpMessage();
     const timeoutMs = 2000;
+
+    let versionUrl: string;
+    try {
+      versionUrl = new URL("/json/version", endpoint).toString();
+    } catch {
+      return {
+        endpoint,
+        checkedAt,
+        status: "attach_unavailable",
+        ready: false,
+        reachable: false,
+        help,
+        error: `Invalid CDP endpoint URL: ${endpoint}`,
+      };
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const help = BrowserManager.buildAttachHelpMessage();
 
     try {
       const response = await fetch(versionUrl, {
