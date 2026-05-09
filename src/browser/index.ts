@@ -456,7 +456,7 @@ export class BrowserManager {
 
     const selectedTab =
       this.attachSelection?.endpoint === endpoint
-        ? filteredTabs.find((tab) => tab.id === this.attachSelection?.tab.id) ?? null
+        ? tabs.find((tab) => tab.id === this.attachSelection?.tab.id) ?? null
         : null;
 
     return {
