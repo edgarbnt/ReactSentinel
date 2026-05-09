@@ -429,7 +429,7 @@ export class BrowserManager {
 
       return attachedPage;
     } catch (error) {
-      await browser.close();
+      await browser.close().catch(() => undefined);
       throw error;
     }
   }
