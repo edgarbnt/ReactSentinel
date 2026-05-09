@@ -124,6 +124,31 @@ export interface ComponentStateResponse {
   durationMs: number;
 }
 
+// ---------------------------------------------------------------------------
+// Render monitor (Sprint 10)
+// ---------------------------------------------------------------------------
+
+export interface RenderCountEntry {
+  componentName: string;
+  pathText: string;
+  count: number;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface RenderCountsSummary {
+  totalComponents: number;
+  totalRenders: number;
+  observedCommits: number;
+}
+
+export interface RenderCountsResponse {
+  url: string;
+  counts: RenderCountEntry[];
+  summary: RenderCountsSummary;
+  durationMs: number;
+}
+
 export interface ConsoleEvent {
   type: "log" | "warn" | "error" | "exception";
   text: string;
