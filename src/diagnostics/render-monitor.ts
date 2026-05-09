@@ -1,5 +1,7 @@
 import type {
   ComponentHookKind,
+  HookChangeEntry,
+  HookChangesSummary,
   RenderCountEntry,
   RenderCountsSummary,
   RenderHotspotCause,
@@ -562,5 +564,115 @@ export function readRenderHotspotsState(
     threshold,
     windowMs,
     hotspots,
+  };
+}
+
+export function readHookChangesState(
+  stateValue: unknown,
+  options: {
+    componentName: string;
+    pathText?: string;
+    limit?: number;
+  }
+): {
+  componentName: string;
+  pathText: string | null;
+  found: boolean;
+  changes: HookChangeEntry[];
+  summary: HookChangesSummary;
+} {
+  const normalized = normalizeState(stateValue);
+  const limit = typeof options.limit === "number" && options.limit > 0 ? options.limit : 50;
+  const matches = normalized.counts.filter((entry) => {
+    if (entry.componentName !== options.componentName) return false;
+    if (options.pathText) return entry.pathText === options.pathText;
+    return true;
+  });
+  const target =
+    matches.sort((left, right) => right.count - left.count || right.lastSeen.localeCompare(left.lastSeen))[0] ?? null;
+
+  if (!target) {
+    return {
+      componentName: options.componentName,
+      pathText: options.pathText ?? null,
+      found: false,
+      changes: [],
+      summary: {
+        trackedRenders: 0,
+        totalChanges: 0,
+        suspiciousHooks: [],
+        probableCause: "No render history was captured for this component.",
+      },
+    };
+  }
+
+  const samples = [...target.samples].sort((left, right) => left.renderId - right.renderId);
+  const changes: HookChangeEntry[] = [];
+  const changeCounts = new Map<string, { hookIndex: number; hookKind: ComponentHookKind; changeCount: number }>();
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previousSample = samples[index - 1];
+    const currentSample = samples[index];
+    const previousHooks = new Map(previousSample.hooks.map((hook) => [`${hook.index}:${hook.kind}`, hook] as const));
+    const currentHooks = new Map(currentSample.hooks.map((hook) => [`${hook.index}:${hook.kind}`, hook] as const));
+    const hookKeys = new Set([...previousHooks.keys(), ...currentHooks.keys()]);
+
+    for (const hookKey of hookKeys) {
+      const previousHook = previousHooks.get(hookKey);
+      const currentHook = currentHooks.get(hookKey);
+      const previousValue = previousHook ? stableStringify(previousHook.value) : "undefined";
+      const currentValue = currentHook ? stableStringify(currentHook.value) : "undefined";
+      if (previousValue === currentValue) continue;
+
+      changes.push({
+        timestamp: currentSample.timestamp,
+        renderId: currentSample.renderId,
+        hookIndex: currentHook?.index ?? previousHook?.index ?? -1,
+        hookKind: currentHook?.kind ?? previousHook?.kind ?? "unknown",
+        previousValue: previousHook?.value ?? null,
+        nextValue: currentHook?.value ?? null,
+      });
+
+      const currentStat = changeCounts.get(hookKey);
+      changeCounts.set(hookKey, {
+        hookIndex: currentHook?.index ?? previousHook?.index ?? -1,
+        hookKind: currentHook?.kind ?? previousHook?.kind ?? "unknown",
+        changeCount: (currentStat?.changeCount ?? 0) + 1,
+      });
+    }
+  }
+
+  const transitions = Math.max(0, samples.length - 1);
+  const suspicionThreshold = Math.max(2, transitions - 1);
+  const suspiciousHooks = [...changeCounts.values()]
+    .sort((left, right) => right.changeCount - left.changeCount)
+    .map((entry) => ({
+      hookIndex: entry.hookIndex,
+      hookKind: entry.hookKind,
+      changeCount: entry.changeCount,
+      suspected: entry.changeCount >= suspicionThreshold,
+    }));
+
+  const lead = suspiciousHooks[0] ?? null;
+  const probableCause =
+    lead && lead.suspected
+      ? lead.hookKind === "state"
+        ? `State hook #${lead.hookIndex} kept changing across renders and is the most likely unstable value.`
+        : `Hook #${lead.hookIndex} (${lead.hookKind}) kept changing across renders and is the most likely unstable value.`
+      : changes.length > 0
+        ? "Hook changes were detected, but no single hook dominated the recent render transitions."
+        : "No hook value changed across the captured renders.";
+
+  return {
+    componentName: target.componentName,
+    pathText: target.pathText || null,
+    found: true,
+    changes: changes.slice(0, limit),
+    summary: {
+      trackedRenders: samples.length,
+      totalChanges: changes.length,
+      suspiciousHooks,
+      probableCause,
+    },
   };
 }

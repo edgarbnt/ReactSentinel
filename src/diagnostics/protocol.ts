@@ -177,6 +177,39 @@ export interface RenderHotspotsResponse {
   durationMs: number;
 }
 
+export interface HookChangeEntry {
+  timestamp: string;
+  renderId: number;
+  hookIndex: number;
+  hookKind: ComponentHookKind;
+  previousValue: unknown;
+  nextValue: unknown;
+}
+
+export interface HookChangeSummaryEntry {
+  hookIndex: number;
+  hookKind: ComponentHookKind;
+  changeCount: number;
+  suspected: boolean;
+}
+
+export interface HookChangesSummary {
+  trackedRenders: number;
+  totalChanges: number;
+  suspiciousHooks: HookChangeSummaryEntry[];
+  probableCause: string;
+}
+
+export interface HookChangesResponse {
+  url: string;
+  componentName: string;
+  pathText: string | null;
+  found: boolean;
+  changes: HookChangeEntry[];
+  summary: HookChangesSummary;
+  durationMs: number;
+}
+
 export interface ConsoleEvent {
   type: "log" | "warn" | "error" | "exception";
   text: string;

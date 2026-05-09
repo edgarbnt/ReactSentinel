@@ -48,6 +48,7 @@ import type {
   ComponentStateResponse,
   ConsoleEvent,
   ConsoleEventsResponse,
+  HookChangesResponse,
   InspectionResponseMode,
   RenderCountsResponse,
   RenderHotspotsResponse,
@@ -61,6 +62,7 @@ import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js
 import { detectReact } from "../diagnostics/react-detector.js";
 import {
   buildRenderMonitorSource,
+  readHookChangesState,
   readRenderCountsState,
   readRenderHotspotsState,
   type RenderMonitorInitArgs,
@@ -1185,6 +1187,7 @@ export class BrowserManager {
       | "get_component_state"
       | "get_render_counts"
       | "get_render_hotspots"
+      | "get_hook_changes"
   ) {
     const raw = this.handleError(e, url).error;
     const code =
@@ -1418,6 +1421,43 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleInspectionError(e, url, "get_render_hotspots");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getHookChanges() — Sprint 10
+  // ---------------------------------------------------------------------------
+  async getHookChanges(
+    url: string,
+    componentName: string,
+    pathText?: string,
+    limit: number = 50
+  ): Promise<HookChangesResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const state = await page.evaluate((globalKey) => {
+        const current = Reflect.get(window as typeof window & Record<string, unknown>, globalKey);
+        return current && typeof current === "object" ? current : null;
+      }, BrowserManager.renderMonitorGlobalKey);
+      const result = readHookChangesState(state, {
+        componentName,
+        pathText,
+        limit,
+      });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        componentName,
+        pathText: result.pathText,
+        found: result.found,
+        changes: result.changes,
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_hook_changes");
     }
   }
 
