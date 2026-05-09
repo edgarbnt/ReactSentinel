@@ -382,6 +382,10 @@ export class BrowserManager {
         : null;
     const mode: SessionInfo["mode"] = this.attachSelection ? "attach" : "replay";
     const pageUrl = mode === "attach" ? attachPageUrl : replayPageUrl;
+    const connected =
+      mode === "attach"
+        ? this.attachedPage !== null && !this.attachedPage.isClosed()
+        : this.page !== null && !this.page.isClosed();
     const title =
       mode === "attach"
         ? (await this.readPageTitle(this.attachedPage)) ?? this.attachSelection?.tab.title ?? null
@@ -389,7 +393,7 @@ export class BrowserManager {
 
     return {
       mode,
-      connected: pageUrl !== null,
+      connected,
       pageUrl,
       title,
       replay: {
