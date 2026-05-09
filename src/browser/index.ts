@@ -24,6 +24,12 @@ import type {
   AttachTabSelectionResponse,
   NetworkEvent,
   NetworkEventsResponse,
+  ReplayNavigationResponse,
+  ReplaySequenceResponse,
+  ReplayStep,
+  ReplayStepResult,
+  ReplayWaitUntil,
+  SessionInfo,
 } from "./protocol.js";
 import type {
   RuntimeStatus,
@@ -53,6 +59,7 @@ export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
+  private replayHeadless = true;
   private attachedBrowser: Browser | null = null;
   private attachedPage: Page | null = null;
   private attachedEndpoint: string | null = null;
@@ -287,10 +294,16 @@ export class BrowserManager {
     }
   }
 
-  /** Launch a headless Chromium instance (idempotent). */
-  async launch(): Promise<void> {
+  /** Launch a replay Chromium instance (idempotent). */
+  async launch(headless: boolean = this.replayHeadless): Promise<void> {
+    if (this.browser && this.replayHeadless !== headless) {
+      await this.closeReplaySession();
+    }
+
+    this.replayHeadless = headless;
     if (this.browser) return;
-    this.browser = await chromium.launch({ headless: true });
+
+    this.browser = await chromium.launch({ headless: this.replayHeadless });
     this.context = await this.browser.newContext();
     await this.context.addInitScript(
       BrowserManager.installRuntimeBridgeScript,
@@ -299,7 +312,9 @@ export class BrowserManager {
     this.page = await this.context.newPage();
 
     this.activateRuntimePage(this.page);
-    console.error("[react-sentinel] Browser launched (headless chromium, persistent session)");
+    console.error(
+      `[react-sentinel] Replay browser launched (${this.replayHeadless ? "headless" : "headed"} chromium, persistent session)`
+    );
   }
 
   private setupListeners(page: Page): void {
@@ -345,6 +360,92 @@ export class BrowserManager {
     const args = BrowserManager.getRuntimeBridgeArgs();
     await page.addInitScript(BrowserManager.installRuntimeBridgeScript, args);
     await page.evaluate(BrowserManager.installRuntimeBridgeScript, args);
+  }
+
+  private async readPageTitle(page: Page | null): Promise<string | null> {
+    if (!page || page.isClosed()) return null;
+    try {
+      return await page.title();
+    } catch {
+      return null;
+    }
+  }
+
+  async getSessionInfo(): Promise<SessionInfo> {
+    const attachPageUrl =
+      this.attachedPage && !this.attachedPage.isClosed()
+        ? this.attachedPage.url()
+        : this.attachSelection?.tab.url ?? null;
+    const replayPageUrl =
+      this.page && !this.page.isClosed()
+        ? this.page.url()
+        : null;
+    const mode: SessionInfo["mode"] = this.attachSelection ? "attach" : "replay";
+    const pageUrl = mode === "attach" ? attachPageUrl : replayPageUrl;
+    const title =
+      mode === "attach"
+        ? (await this.readPageTitle(this.attachedPage)) ?? this.attachSelection?.tab.title ?? null
+        : await this.readPageTitle(this.page);
+
+    return {
+      mode,
+      connected: pageUrl !== null,
+      pageUrl,
+      title,
+      replay: {
+        active: this.page !== null && !this.page.isClosed(),
+        config: {
+          headless: this.replayHeadless,
+        },
+      },
+      attach: {
+        active: this.attachSelection !== null,
+        endpoint: this.attachSelection?.endpoint ?? null,
+        selectedTab: this.attachSelection?.tab ?? null,
+      },
+    };
+  }
+
+  private async closeReplaySession(): Promise<void> {
+    const replayPage = this.page;
+    if (!this.browser) return;
+
+    try {
+      await this.browser.close();
+    } finally {
+      this.browser = null;
+      this.context = null;
+      this.page = null;
+
+      if (this.runtimeEventPage === replayPage) {
+        this.runtimeEventPage = null;
+        this.consoleEvents = [];
+      }
+
+      console.error("[react-sentinel] Replay browser closed");
+    }
+  }
+
+  private formatNavigationError(error: unknown, url: string, timeoutMs: number): string {
+    const raw = error instanceof Error ? error.message : String(error);
+    if (raw.includes("ERR_CONNECTION_REFUSED") || raw.includes("ECONNREFUSED")) {
+      return `Cannot connect to ${url} — is the app running?`;
+    }
+
+    if (raw.includes("ERR_NAME_NOT_RESOLVED")) {
+      return `Cannot resolve ${url} — check the hostname.`;
+    }
+
+    if (raw.includes("Timeout") || raw.includes("timed out")) {
+      return `Navigation to ${url} timed out after ${timeoutMs}ms.`;
+    }
+
+    const netError = raw.match(/net::ERR_[A-Z_]+/);
+    if (netError) {
+      return `Navigation to ${url} failed: ${netError[0]}.`;
+    }
+
+    return `Navigation to ${url} failed: ${raw}`;
   }
 
   private async clearAttachConnection(): Promise<void> {
@@ -441,21 +542,30 @@ export class BrowserManager {
   /** Close browser and release all resources. */
   async close(): Promise<void> {
     await this.clearAttachConnection();
-
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-      this.context = null;
-      this.page = null;
-      this.runtimeEventPage = null;
-      this.consoleEvents = [];
-      console.error("[react-sentinel] Browser closed");
-    }
+    await this.closeReplaySession();
   }
 
-  /** Gets the persistent sandbox page, navigating if the URL is different. */
-  public async getSandboxPage(url: string): Promise<Page> {
-    if (!this.page) await this.launch();
+  /** Gets the persistent replay page, navigating if the URL is different. */
+  public async getSandboxPage(
+    url: string,
+    options?: {
+      headless?: boolean;
+      waitUntil?: ReplayWaitUntil;
+      timeoutMs?: number;
+      resetSession?: boolean;
+    }
+  ): Promise<Page> {
+    const {
+      headless,
+      waitUntil = "domcontentloaded",
+      timeoutMs = 10_000,
+      resetSession = false,
+    } = options ?? {};
+    if (resetSession) {
+      await this.closeReplaySession();
+    }
+
+    await this.launch(headless);
 
     const currentUrl = this.page!.url();
     // Normalize urls to ignore trailing slashes
@@ -464,16 +574,25 @@ export class BrowserManager {
 
     if (normalizedCurrent !== normalizedTarget || currentUrl === "about:blank") {
       this.consoleEvents = []; // Clear events on new navigation
-      const response = await this.page!.goto(url, {
-        timeout: 10_000,
-        waitUntil: "domcontentloaded",
-      });
+      let response;
+
+      try {
+        response = await this.page!.goto(url, {
+          timeout: timeoutMs,
+          waitUntil,
+        });
+      } catch (error) {
+        throw new Error(this.formatNavigationError(error, url, timeoutMs));
+      }
 
       if (!response || !response.ok()) {
-        throw new Error(`Cannot reach ${url} — HTTP ${response?.status() ?? "no response"}.`);
+        throw new Error(`Navigation to ${url} failed with HTTP ${response?.status() ?? "no response"}.`);
       }
+
+      await this.installRuntimeBridge(this.page!);
     }
 
+    this.activateRuntimePage(this.page!);
     return this.page!;
   }
 
@@ -487,8 +606,64 @@ export class BrowserManager {
     return page;
   }
 
+  private async getReplayPageForSequence(
+    url?: string,
+    options?: {
+      headless?: boolean;
+      timeoutMs?: number;
+      waitUntil?: ReplayWaitUntil;
+      resetSession?: boolean;
+    }
+  ): Promise<Page> {
+    if (url) {
+      return this.getSandboxPage(url, options);
+    }
+
+    await this.launch(options?.headless);
+
+    if (!this.page || this.page.isClosed()) {
+      throw new Error("No replay session is active. Call navigate_replay first or provide a URL.");
+    }
+
+    this.activateRuntimePage(this.page);
+    return this.page;
+  }
+
   private static buildAttachHelpMessage(): string {
     return BrowserManager.cdpHelpMessage;
+  }
+
+  async navigateReplay(
+    url: string,
+    options?: {
+      headless?: boolean;
+      waitUntil?: ReplayWaitUntil;
+      timeoutMs?: number;
+      resetSession?: boolean;
+    }
+  ): Promise<ReplayNavigationResponse | { error: string }> {
+    const waitUntil = options?.waitUntil ?? "domcontentloaded";
+    const timeoutMs = options?.timeoutMs ?? 10_000;
+
+    try {
+      const page = await this.getSandboxPage(url, {
+        headless: options?.headless,
+        waitUntil,
+        timeoutMs,
+        resetSession: options?.resetSession,
+      });
+
+      return {
+        session: await this.getSessionInfo(),
+        url: await page.evaluate(() => document.URL),
+        title: await page.title(),
+        navigatedAt: new Date().toISOString(),
+        waitUntil,
+        timeoutMs,
+      };
+    } catch (error) {
+      return this.handleError(error, url);
+    }
   }
 
   async getAttachStatus(
@@ -692,7 +867,7 @@ export class BrowserManager {
   }
 
   private handleError(e: unknown, url: string) {
-    const msg = String(e);
+    const msg = e instanceof Error ? e.message : String(e);
     const isConnRefused = msg.includes("ECONNREFUSED") || msg.includes("ERR_CONNECTION_REFUSED");
     return {
       error: isConnRefused ? `Cannot connect to ${url} — is the app running?` : msg,
@@ -1045,14 +1220,122 @@ export class BrowserManager {
     }
   }
 
+  private async runReplayStep(page: Page, step: ReplayStep): Promise<Omit<ReplayStepResult, "index" | "url">> {
+    const start = Date.now();
+
+    try {
+      if (step.action === "wait") {
+        await page.waitForTimeout(step.durationMs);
+        return {
+          step,
+          success: true,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      if (step.action === "press") {
+        if (step.selector) {
+          await page.waitForSelector(step.selector, {
+            state: "visible",
+            timeout: step.timeoutMs ?? 3_000,
+          });
+          await page.locator(step.selector).press(step.key);
+        } else {
+          await page.keyboard.press(step.key);
+        }
+
+        return {
+          step,
+          success: true,
+          durationMs: Date.now() - start,
+        };
+      }
+
+      await page.waitForSelector(step.selector, {
+        state: "visible",
+        timeout: step.timeoutMs ?? 3_000,
+      });
+
+      const element = page.locator(step.selector);
+      if (step.action === "click") {
+        await element.click();
+      } else {
+        await element.fill(step.value);
+      }
+
+      return {
+        step,
+        success: true,
+        durationMs: Date.now() - start,
+      };
+    } catch (error) {
+      return {
+        step,
+        success: false,
+        durationMs: Date.now() - start,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  async replayInteractions(
+    steps: ReplayStep[],
+    options?: {
+      url?: string;
+      headless?: boolean;
+      timeoutMs?: number;
+      waitUntil?: ReplayWaitUntil;
+      resetSession?: boolean;
+      continueOnError?: boolean;
+    }
+  ): Promise<ReplaySequenceResponse | { error: string }> {
+    const startedAt = new Date().toISOString();
+    const start = Date.now();
+
+    try {
+      const page = await this.getReplayPageForSequence(options?.url, {
+        headless: options?.headless,
+        timeoutMs: options?.timeoutMs,
+        waitUntil: options?.waitUntil,
+        resetSession: options?.resetSession,
+      });
+      const results: ReplayStepResult[] = [];
+
+      for (const [index, step] of steps.entries()) {
+        const result = await this.runReplayStep(page, step);
+        results.push({
+          index,
+          url: await page.evaluate(() => document.URL),
+          ...result,
+        });
+
+        if (!result.success && !options?.continueOnError) {
+          break;
+        }
+      }
+
+      return {
+        session: await this.getSessionInfo(),
+        url: await page.evaluate(() => document.URL),
+        startedAt,
+        durationMs: Date.now() - start,
+        success: results.every((result) => result.success),
+        steps: results,
+      };
+    } catch (error) {
+      return options?.url ? this.handleError(error, options.url) : { error: String(error) };
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // simulateInteraction() — SCRUM-13
   // ---------------------------------------------------------------------------
   async simulateInteraction(
     url: string,
-    action: "click" | "type" | "fill",
+    action: "click" | "type" | "fill" | "press",
     selector: string,
-    value?: string
+    value?: string,
+    key?: string
   ): Promise<import("./protocol.js").InteractionData> {
     const start = Date.now();
     try {
@@ -1079,6 +1362,8 @@ export class BrowserManager {
         await element.type(value || "");
       } else if (action === "fill") {
         await element.fill(value || "");
+      } else if (action === "press") {
+        await element.press(key || "Enter");
       }
 
       return {

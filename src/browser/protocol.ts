@@ -12,9 +12,10 @@ export interface BrowserRequest {
 
 /** Interaction request payload */
 export interface InteractionPayload {
-  action: "click" | "type" | "fill";
+  action: "click" | "type" | "fill" | "press";
   selector: string;
   value?: string; // For type/fill actions
+  key?: string; // For press actions
 }
 
 /** Interaction result data */
@@ -23,6 +24,28 @@ export interface InteractionData {
   action: InteractionPayload["action"];
   selector: string;
   error?: string;
+}
+
+export type SessionMode = "replay" | "attach";
+
+export interface ReplayConfig {
+  headless: boolean;
+}
+
+export interface SessionInfo {
+  mode: SessionMode;
+  connected: boolean;
+  pageUrl: string | null;
+  title: string | null;
+  replay: {
+    active: boolean;
+    config: ReplayConfig;
+  };
+  attach: {
+    active: boolean;
+    endpoint: string | null;
+    selectedTab: AttachTabInfo | null;
+  };
 }
 
 /** Assertion types */
@@ -168,4 +191,64 @@ export interface AttachStatus {
   protocolVersion?: string;
   userAgent?: string;
   webSocketDebuggerUrl?: string;
+}
+
+export type ReplayWaitUntil = "load" | "domcontentloaded" | "networkidle";
+
+export interface ReplayNavigationResponse {
+  session: SessionInfo;
+  url: string;
+  title: string;
+  navigatedAt: string;
+  waitUntil: ReplayWaitUntil;
+  timeoutMs: number;
+}
+
+export interface ReplayClickStep {
+  action: "click";
+  selector: string;
+  timeoutMs?: number;
+}
+
+export interface ReplayFillStep {
+  action: "fill";
+  selector: string;
+  value: string;
+  timeoutMs?: number;
+}
+
+export interface ReplayWaitStep {
+  action: "wait";
+  durationMs: number;
+}
+
+export interface ReplayPressStep {
+  action: "press";
+  key: string;
+  selector?: string;
+  timeoutMs?: number;
+}
+
+export type ReplayStep =
+  | ReplayClickStep
+  | ReplayFillStep
+  | ReplayWaitStep
+  | ReplayPressStep;
+
+export interface ReplayStepResult {
+  index: number;
+  step: ReplayStep;
+  success: boolean;
+  durationMs: number;
+  url: string;
+  error?: string;
+}
+
+export interface ReplaySequenceResponse {
+  session: SessionInfo;
+  url: string;
+  startedAt: string;
+  durationMs: number;
+  success: boolean;
+  steps: ReplayStepResult[];
 }
