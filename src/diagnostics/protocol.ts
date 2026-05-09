@@ -62,6 +62,15 @@ export interface ReactTreeResponse {
 // Component Inspection (SCRUM-9)
 // ---------------------------------------------------------------------------
 
+export type ComponentHookKind = "state" | "ref" | "memo" | "unknown";
+
+export interface ComponentHookValue {
+  index: number;
+  kind: ComponentHookKind;
+  source: "memoizedState";
+  value: unknown;
+}
+
 export interface ComponentInspectionNode {
   name: string;
   props: Record<string, unknown>;
@@ -74,6 +83,21 @@ export interface ComponentInspectionResponse {
   componentName: string;
   found: boolean;
   component: ComponentInspectionNode | null;
+  durationMs: number;
+}
+
+export interface ComponentStateNode {
+  name: string;
+  path: string[];
+  childrenCount: number;
+  hooks: ComponentHookValue[];
+}
+
+export interface ComponentStateResponse {
+  url: string;
+  componentName: string;
+  found: boolean;
+  state: ComponentStateNode | null;
   durationMs: number;
 }
 

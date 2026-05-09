@@ -35,6 +35,8 @@ import type {
   RuntimeTimelineSource,
   RuntimeTimelineSummary,
 } from "../diagnostics/protocol.js";
+import type { ComponentStateResponse } from "../diagnostics/protocol.js";
+import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
@@ -800,6 +802,38 @@ export class BrowserManager {
         componentName,
         found: componentNode !== null,
         component: componentNode,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleError(e, url);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getComponentState() — SCRUM-110
+  // ---------------------------------------------------------------------------
+  async getComponentState(
+    url: string,
+    componentName: string
+  ): Promise<ComponentStateResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+
+      const { inspectReactRuntime } = await import("../diagnostics/react-runtime.js");
+      const request: ReactRuntimeInspectRequest = {
+        mode: "component-state",
+        componentName,
+      };
+      const result = await page.evaluate(inspectReactRuntime, request);
+      const state = result.state ?? null;
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        componentName,
+        found: state !== null,
+        state,
         durationMs: Date.now() - start,
       };
     } catch (e) {

@@ -108,6 +108,36 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_component_state
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_component_state",
+    [
+      "Inspect a specific React component and return its serializable hook state.",
+      "Useful for checking simple useState/useRef/useMemo values without reading source code.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      componentName: z
+        .string()
+        .min(1)
+        .describe("Name of the React component whose hook state should be extracted."),
+    },
+    async ({ url, componentName }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getComponentState(url, componentName);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_component_state failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_console_events
   // -------------------------------------------------------------------------
   server.tool(
