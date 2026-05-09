@@ -27,6 +27,7 @@ export type ManagedProcess = {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(__dirname, "..");
 export const demoUrl = process.env.RS_E2E_URL ?? "http://127.0.0.1:5173";
+const demoTarget = new URL(demoUrl);
 const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 
 export function assert(condition: unknown, message: string): asserts condition {
@@ -91,7 +92,12 @@ export async function ensureDemoApp(processes: ManagedProcess[]): Promise<{ reus
     await waitForHttp(demoUrl, 1500);
     return { reused: true };
   } catch {
-    const child = spawn(npmCommand, ["run", "dev", "--", "--host", "127.0.0.1"], {
+    const args = ["run", "dev", "--", "--host", demoTarget.hostname];
+    if (demoTarget.port) {
+      args.push("--port", demoTarget.port);
+    }
+
+    const child = spawn(npmCommand, args, {
       cwd: path.join(repoRoot, "examples", "test-app"),
       env: toEnvRecord(),
       stdio: ["ignore", "pipe", "pipe"],
