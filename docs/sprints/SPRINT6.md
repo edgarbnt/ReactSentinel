@@ -78,6 +78,17 @@ This sprint extends the project from "component props + runtime signals" to a mo
 - **Compact mode through stricter serialization limits:** rather than defining a second response shape, compact mode keeps the same schema but uses more aggressive payload trimming. This makes the tool easier for both humans and AI clients to consume.
 - **Safe placeholders over silent drops:** complex or unsupported values are rendered as explicit placeholders (`[Circular]`, `[MaxDepthReached]`, `[Function:...]`, etc.) instead of disappearing from the payload.
 
+## Documentation d'usage et limites (SCRUM-142)
+
+La doc d'usage doit expliciter les limites suivantes pour que l'outil soit compréhensible côté utilisateur:
+
+- **Hooks supportés:** extraction fiable pour les cellules React reconnues comme `useState`, `useRef` et `useMemo`.
+- **Limite de parcours:** la remontée des hooks s'arrête à **25 cellules** par composant pour éviter les chaînes trop longues ou cycliques.
+- **Hooks custom / non reconnus:** React-Sentinel ne devine pas le nom des custom hooks; il inspecte les cellules internes du Fiber. Si une cellule ne ressemble pas à un hook connu et que sa valeur n'est pas un primitif sérialisable, elle est ignorée plutôt qu'inventée. Les primitives non reconnues sont exposées comme `kind: "unknown"`.
+- **Troncature des valeurs complexes:** les chaînes longues, tableaux, objets, `Map`, `Set`, éléments React et objets DOM sont tronqués ou remplacés par des placeholders explicites (`[MaxDepthReached]`, `[MaxNodesReached]`, `[Circular]`, `[Function:...]`, `[ReactElement:...]`, `[HTMLElement:...]`).
+
+Ces limites sont volontaires: elles gardent les réponses stables, lisibles et exploitables par un agent IA sans faire exploser le contexte.
+
 ## Demo App Additions
 
 Sprint 6 added a dedicated runtime fixture to `examples/test-app`:

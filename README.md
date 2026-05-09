@@ -85,6 +85,17 @@ Then call `get_attach_status` to check whether the CDP endpoint is reachable. If
 
 Once the endpoint is ready, use `get_attach_tabs` to list the available page tabs and `select_attach_tab` to pick one by index, URL, or title. The first `select_attach_tab` response is a consent preview: it explains that React-Sentinel will inspect the selected tab's runtime signals and may run interaction tools in that same tab. Re-run `select_attach_tab` with `confirm: true` to enable live browser mode for that tab. After consent is recorded, the runtime inspection and interaction tools reuse only that live tab instead of opening the isolated sandbox browser. If the tab closes, React-Sentinel clears the selection and asks you to choose a tab again.
 
+## Runtime inspection limits
+
+The hook/state inspector is intentionally bounded so responses stay readable for AI clients:
+
+- **Supported hook cells:** `useState`, `useRef`, and `useMemo` are extracted reliably.
+- **Traversal cap:** hook traversal stops after **25 cells** per component.
+- **Custom / unrecognized hooks:** React-Sentinel does not infer custom hook names. It walks the underlying Fiber hook cells; cells that do not match a known shape and are not serializable primitives are omitted, while primitive unknowns are exposed as `unknown`.
+- **Truncation rules:** long strings, arrays, object keys, `Map`, `Set`, React elements, DOM elements, and cyclic values are shortened or replaced with explicit placeholders such as `[Circular]`, `[MaxDepthReached]`, `[MaxNodesReached]`, `[Function:...]`, `[ReactElement:...]`, and `[HTMLElement:...]`.
+
+These limits are by design: they keep the output stable and compact enough to be useful in the middle of a debugging session.
+
 ## Available scripts
 
 | Script | Description |
