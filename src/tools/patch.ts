@@ -150,13 +150,18 @@ export function register(server: McpServer): void {
         });
         if ("error" in report) {
           if (cleanup !== "keep") {
-            await browserManager.resetRuntimePatches({
+            const cleanupResult = await browserManager.resetRuntimePatches({
               strategy: cleanup as "reload" | "reset_session",
               waitUntil,
               timeoutMs,
               headless,
               reopenUrl,
             });
+            if ("error" in cleanupResult) {
+              return err(
+                `${report.error} Cleanup after validation failure also failed: ${cleanupResult.error}. Runtime patches may still be active.`
+              );
+            }
           }
           return err(report.error);
         }
