@@ -1237,7 +1237,9 @@ export class BrowserManager {
             state: "visible",
             timeout: step.timeoutMs ?? 3_000,
           });
-          await page.locator(step.selector).press(step.key);
+          await page.locator(step.selector).press(step.key, {
+            timeout: step.timeoutMs ?? 3_000,
+          });
         } else {
           await page.keyboard.press(step.key);
         }
