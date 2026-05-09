@@ -156,7 +156,10 @@ export class BrowserManager {
             ? input.toString()
             : input.url;
 
-      const requestMethod = init?.method ?? "GET";
+      const requestMethod =
+        init?.method ??
+        (input instanceof Request ? input.method : undefined) ??
+        "GET";
       const normalizedMethod = requestMethod.toUpperCase();
 
       try {
