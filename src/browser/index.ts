@@ -27,14 +27,18 @@ import type {
 } from "./protocol.js";
 import type {
   RuntimeStatus,
+  ComponentInspectionResponse,
+  ComponentStateResponse,
   ConsoleEvent,
   ConsoleEventsResponse,
+  InspectionResponseMode,
   RuntimeTimelineEvent,
   RuntimeTimelineLevel,
   RuntimeTimelineResponse,
   RuntimeTimelineSource,
   RuntimeTimelineSummary,
 } from "../diagnostics/protocol.js";
+import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
@@ -695,6 +699,24 @@ export class BrowserManager {
     };
   }
 
+  private handleInspectionError(
+    e: unknown,
+    url: string,
+    operation: "get_react_tree" | "inspect_component" | "get_component_state"
+  ) {
+    const raw = this.handleError(e, url).error;
+    const code =
+      raw.includes("Cannot connect to")
+        ? "runtime_unreachable"
+        : raw.includes("Execution context was destroyed")
+          ? "page_reloaded"
+          : "inspection_failed";
+
+    return {
+      error: `[${operation}:${code}] ${raw}`,
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // ping() — SCRUM-20
   // ---------------------------------------------------------------------------
@@ -767,16 +789,21 @@ export class BrowserManager {
     try {
       const page = await this.getRuntimePage(url);
 
-      const { extractReactTree } = await import("../diagnostics/react-tree.js");
-      const tree = await page.evaluate(extractReactTree, { maxDepth, includeHostNodes });
+      const { inspectReactRuntime } = await import("../diagnostics/react-runtime.js");
+      const request: ReactRuntimeInspectRequest = {
+        mode: "tree",
+        maxDepth,
+        includeHostNodes,
+      };
+      const result = await page.evaluate(inspectReactRuntime, request);
 
       return {
         url: await page.evaluate(() => document.URL),
-        tree,
+        tree: result.tree ?? null,
         durationMs: Date.now() - start,
       };
     } catch (e) {
-      return this.handleError(e, url);
+      return this.handleInspectionError(e, url, "get_react_tree");
     }
   }
 
@@ -785,25 +812,68 @@ export class BrowserManager {
   // ---------------------------------------------------------------------------
   async inspectComponent(
     url: string,
-    componentName: string
-  ): Promise<import("../diagnostics/protocol.js").ComponentInspectionResponse | { error: string }> {
+    componentName: string,
+    responseMode: InspectionResponseMode = "full"
+  ): Promise<ComponentInspectionResponse | { error: string }> {
     const start = Date.now();
 
     try {
       const page = await this.getRuntimePage(url);
 
-      const { inspectReactComponent } = await import("../diagnostics/react-inspector.js");
-      const componentNode = await page.evaluate(inspectReactComponent, componentName);
+      const { inspectReactRuntime } = await import("../diagnostics/react-runtime.js");
+      const request: ReactRuntimeInspectRequest = {
+        mode: "component",
+        componentName,
+        compact: responseMode === "compact",
+      };
+      const result = await page.evaluate(inspectReactRuntime, request);
+      const componentNode = result.component ?? null;
 
       return {
         url: await page.evaluate(() => document.URL),
         componentName,
+        responseMode,
         found: componentNode !== null,
         component: componentNode,
         durationMs: Date.now() - start,
       };
     } catch (e) {
-      return this.handleError(e, url);
+      return this.handleInspectionError(e, url, "inspect_component");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getComponentState() — SCRUM-110
+  // ---------------------------------------------------------------------------
+  async getComponentState(
+    url: string,
+    componentName: string,
+    responseMode: InspectionResponseMode = "full"
+  ): Promise<ComponentStateResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+
+      const { inspectReactRuntime } = await import("../diagnostics/react-runtime.js");
+      const request: ReactRuntimeInspectRequest = {
+        mode: "component-state",
+        componentName,
+        compact: responseMode === "compact",
+      };
+      const result = await page.evaluate(inspectReactRuntime, request);
+      const state = result.state ?? null;
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        componentName,
+        responseMode,
+        found: state !== null,
+        state,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_component_state");
     }
   }
 

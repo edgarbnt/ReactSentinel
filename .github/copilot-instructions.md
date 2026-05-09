@@ -42,7 +42,7 @@ Une fois toutes les sous-tâches d'un parent validées :
 
 ## Fin du Sprint
 - La mission s'arrête uniquement lorsque le périmètre total du sprint est atteint (tous les tickets parents traités).
-- À la fin, fournir un récapitulatif global :
+- À la fin, fournir un récapitulatif global a mettre dans docs/sprints/SPRINTX.md (remplacer X par le numéro du sprint) comprenant :
     - Liste des tickets terminés.
     - Liste des branches créées et poussées.
     - Points de vigilance éventuels pour la suite.
