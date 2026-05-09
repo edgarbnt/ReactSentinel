@@ -32,5 +32,31 @@ L'agent ré-exécute le même tool `validate_after_action`.
 
 **Résultat attendu :** `pass: true`.
 
+## Variante Sprint 8 : scénario multi-étapes avec rapport
+
+Pour valider plusieurs invariants d'un coup, l'agent peut maintenant utiliser `validate_scenario`.
+
+**Exemple d'appel :**
+```json
+{
+  "url": "http://localhost:5173/",
+  "steps": [
+    { "action": "click", "selector": "#mock-success-button" },
+    { "action": "wait", "durationMs": 300 }
+  ],
+  "assertions": [
+    { "type": "text_present", "expected": "200 — Mock success response" },
+    { "type": "selector_visible", "selector": "#mock-success-result" },
+    { "type": "no_console_errors" },
+    { "type": "no_http_5xx" }
+  ]
+}
+```
+
+**Résultat attendu :**
+- un rapport JSON brut avec les étapes, assertions et traces runtime ;
+- un rapport Markdown lisible pour l'IA ou le développeur ;
+- `success: true` si toutes les assertions passent.
+
 ---
 *Ce scénario a été validé lors du Sprint 3 (SCRUM-15) en utilisant l'application de test intégrée.*

@@ -105,6 +105,18 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
       currentFiber = currentFiber.return as { return?: unknown };
     }
 
+    if (
+      currentFiber &&
+      typeof currentFiber === "object" &&
+      "stateNode" in currentFiber &&
+      currentFiber.stateNode &&
+      typeof currentFiber.stateNode === "object" &&
+      "current" in currentFiber.stateNode &&
+      isFiber((currentFiber.stateNode as { current?: unknown }).current)
+    ) {
+      return (currentFiber.stateNode as { current: FiberLike }).current;
+    }
+
     return currentFiber;
   }
 
@@ -549,6 +561,8 @@ type FiberLike = {
   return?: FiberLike | null;
   child?: FiberLike | null;
   sibling?: FiberLike | null;
+  alternate?: FiberLike | null;
+  stateNode?: unknown;
   memoizedProps?: Record<string, unknown> | null;
   memoizedState?: unknown;
   dependencies?: {

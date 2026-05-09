@@ -7,6 +7,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { browserManager } from "../browser/index.js";
+import type { Assertion, ValidationScenarioResponse } from "../browser/protocol.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
@@ -23,6 +24,12 @@ const replayStepSchema = z.discriminatedUnion("action", [
     timeoutMs: z.number().int().min(1).max(60_000).optional(),
   }),
   z.object({
+    action: z.literal("type"),
+    selector: z.string().min(1),
+    value: z.string(),
+    timeoutMs: z.number().int().min(1).max(60_000).optional(),
+  }),
+  z.object({
     action: z.literal("wait"),
     durationMs: z.number().int().min(1).max(60_000),
   }),
@@ -33,6 +40,139 @@ const replayStepSchema = z.discriminatedUnion("action", [
     timeoutMs: z.number().int().min(1).max(60_000).optional(),
   }),
 ]);
+
+const interactionSchema = z.object({
+  action: z.enum(["click", "type", "fill", "press"]),
+  selector: z.string().min(1),
+  value: z.string().optional(),
+  key: z.string().optional(),
+});
+
+const assertionSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("text_present"),
+    expected: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("text_absent"),
+    expected: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("selector_visible"),
+    selector: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("selector_hidden"),
+    selector: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("component_present"),
+    componentName: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("component_prop_value"),
+    componentName: z.string().min(1),
+    propPath: z.string().min(1),
+    expected: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  }),
+  z.object({
+    type: z.literal("component_state_value"),
+    componentName: z.string().min(1),
+    hookIndex: z.number().int().min(0).max(24),
+    expected: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+    valuePath: z.string().min(1).optional(),
+  }),
+  z.object({
+    type: z.literal("no_console_errors"),
+  }),
+  z.object({
+    type: z.literal("no_console_warnings"),
+  }),
+  z.object({
+    type: z.literal("no_http_5xx"),
+  }),
+  z.object({
+    type: z.literal("no_unexpected_http_requests"),
+    allowedUrlSubstrings: z.array(z.string().min(1)).min(1),
+  }),
+]);
+
+function formatAssertion(assertion: Assertion): string {
+  switch (assertion.type) {
+    case "text_present":
+      return `text_present "${assertion.expected}"`;
+    case "text_absent":
+      return `text_absent "${assertion.expected}"`;
+    case "selector_visible":
+      return `selector_visible ${assertion.selector}`;
+    case "selector_hidden":
+      return `selector_hidden ${assertion.selector}`;
+    case "component_present":
+      return `component_present ${assertion.componentName}`;
+    case "component_prop_value":
+      return `component_prop_value ${assertion.componentName}.${assertion.propPath} == ${JSON.stringify(assertion.expected)}`;
+    case "component_state_value":
+      return `component_state_value ${assertion.componentName}#${assertion.hookIndex}${assertion.valuePath ? `.${assertion.valuePath}` : ""} == ${JSON.stringify(assertion.expected)}`;
+    case "no_console_errors":
+      return "no_console_errors";
+    case "no_console_warnings":
+      return "no_console_warnings";
+    case "no_http_5xx":
+      return "no_http_5xx";
+    case "no_unexpected_http_requests":
+      return `no_unexpected_http_requests ${assertion.allowedUrlSubstrings.join(", ")}`;
+    default:
+      return `unknown_assertion ${assertion.type}`;
+  }
+}
+
+export function buildScenarioMarkdown(report: ValidationScenarioResponse): string {
+  const lines: string[] = [
+    "# Validation Report",
+    "",
+    `- URL: ${report.url}`,
+    `- Result: ${report.success ? "PASS" : "FAIL"}`,
+    `- Duration: ${report.durationMs}ms`,
+    `- Actions: ${report.summary.actionCount} (${report.summary.actionFailures} failed)`,
+    `- Assertions: ${report.summary.assertionCount} (${report.summary.assertionFailures} failed)`,
+    "",
+    "## Actions",
+  ];
+
+  for (const step of report.steps) {
+    lines.push(
+      `- [${step.success ? "PASS" : "FAIL"}] #${step.index} ${step.step.action} (${step.durationMs}ms)${step.error ? ` — ${step.error}` : ""}`
+    );
+  }
+
+  lines.push("", "## Assertions");
+  for (const result of report.assertions) {
+    lines.push(
+      `- [${result.pass ? "PASS" : "FAIL"}] ${formatAssertion(result.assertion)} — ${result.details ?? "No details"}`
+    );
+  }
+
+  const consoleTraces = report.traces.console.filter(
+    (event) => event.type === "warn" || event.type === "error" || event.type === "exception"
+  );
+  const networkTraces = report.traces.network.filter(
+    (event) => event.isHttpError || Boolean(event.error)
+  );
+
+  lines.push("", "## Relevant Traces");
+  if (consoleTraces.length === 0 && networkTraces.length === 0) {
+    lines.push("- No warning/error traces captured.");
+  } else {
+    for (const event of consoleTraces) {
+      lines.push(`- Console ${event.type}: ${event.text}`);
+    }
+    for (const event of networkTraces) {
+      lines.push(`- Network ${event.method} ${event.url}${event.status === null ? "" : ` -> ${event.status}`}${event.error ? ` (${event.error})` : ""}`);
+    }
+  }
+
+  return lines.join("\n");
+}
 
 export function register(server: McpServer): void {
   // -------------------------------------------------------------------------
@@ -73,24 +213,15 @@ export function register(server: McpServer): void {
     ].join(" "),
     {
       url: z.string().url().describe("The URL of the page."),
-        interaction: z.object({
-          action: z.enum(["click", "type", "fill", "press"]),
-          selector: z.string(),
-          value: z.string().optional(),
-          key: z.string().optional(),
-        }).describe("The interaction to perform."),
-      assertion: z.object({
-        type: z.enum(["text_present", "no_console_errors"]),
-        expected: z.string().optional().describe("Expected text (for 'text_present')."),
-      }).describe("The assertion to verify after the interaction."),
+      interaction: interactionSchema.describe("The interaction to perform."),
+      assertion: assertionSchema.describe("The assertion to verify after the interaction."),
       waitMs: z.number().optional().default(500).describe("Time to wait (ms) between interaction and validation (default 500ms)."),
     },
     async ({ url, interaction, assertion, waitMs }): Promise<ToolResponse> => {
       try {
-        // 1. Clear previous errors to only catch new ones during/after interaction
-        browserManager.clearConsoleEvents();
+        const clearResult = await browserManager.clearRuntimeSignals(url);
+        if ("error" in clearResult) return err(clearResult.error);
 
-        // 2. Interact
         const interactionResult = await browserManager.simulateInteraction(url, interaction.action, interaction.selector, interaction.value, interaction.key);
 
         if (!interactionResult.success) {
@@ -104,10 +235,7 @@ export function register(server: McpServer): void {
           });
         }
 
-        // 3. Wait for UI to settle
         await new Promise((resolve) => setTimeout(resolve, waitMs));
-
-        // 4. Validate
         const validationResult = await browserManager.validate(url, assertion);
 
         return ok({
@@ -121,13 +249,56 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: validate_scenario — SCRUM-170
+  // -------------------------------------------------------------------------
+  server.tool(
+    "validate_scenario",
+    [
+      "Replay a deterministic action sequence and evaluate multiple assertions in one pass.",
+      "Returns both a structured JSON report and a Markdown report with actions, assertions, and useful traces.",
+    ].join(" "),
+    {
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
+      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions to evaluate after the replayed actions."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
+      waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional().default("domcontentloaded").describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      resetSession: z.boolean().optional().default(false).describe("Close the current replay browser first and start a fresh isolated session."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+    },
+    async ({ url, steps, assertions, headless, waitUntil, timeoutMs, resetSession, continueOnError, waitMs }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.runValidationScenario(steps, assertions, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in result) return err(result.error);
+
+        return ok({
+          report: result,
+          reportMarkdown: buildScenarioMarkdown(result),
+        });
+      } catch (e) {
+        return err(`validate_scenario failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: replay_interactions — SCRUM-104
   // -------------------------------------------------------------------------
   server.tool(
     "replay_interactions",
     [
       "Replay a deterministic sequence of browser actions inside the isolated replay session.",
-      "Supports click, fill, wait, and press steps and logs the result of each step.",
+      "Supports click, type, fill, wait, and press steps and logs the result of each step.",
       "Provide a URL to navigate before the replay, or omit it to reuse the current replay page.",
     ].join(" "),
     {
