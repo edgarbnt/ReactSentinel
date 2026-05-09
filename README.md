@@ -8,7 +8,7 @@ React-Sentinel bridges AI terminals (Claude, Copilot CLI…) to a live browser r
 
 | Capability | Description |
 |---|---|
-| **Runtime Inspection** | Explore the React Fiber tree, read hook values (`useState`, `useMemo`), audit network errors and console warnings live |
+| **Runtime Inspection** | Explore the React Fiber tree, inspect component props, extract simple hook values (`useState`, `useRef`, `useMemo`), surface React context values, and audit network or console signals live |
 | **Shadow Sandbox** | Inject ephemeral code patches into an isolated browser instance — no local files touched — then assert the fix worked |
 | **Interaction Simulation** | Drive the browser (click, fill, navigate) to reproduce bugs before attempting to fix them |
 
@@ -112,6 +112,11 @@ examples/
 See [docs/test-scenario-sprint1.md](docs/test-scenario-sprint1.md) for the full end-to-end test scenario
 (start MCP server → open React app → invoke `get_runtime_status` → verify response).
 
+The integrated test app also contains dedicated Sprint 6 fixtures for:
+- hook state inspection (`get_component_state`)
+- component/context inspection (`inspect_component`)
+- compact inspection payload validation
+
 ## Status
 
-🚧 **Sprint 1** — bootstrapping. Core MCP server is running; runtime inspection, shadow sandbox, and interaction simulation are planned.
+✅ **Sprint 6** — runtime inspection now covers React tree lookup, component inspection, hook extraction, context surfacing, network timeline diagnostics, live-tab attach mode, and browser interaction validation.

@@ -96,11 +96,23 @@ export function inspectReactComponent(componentName: string): ComponentInspectio
     const currentPath = [...path, name];
 
     if (name === componentName) {
+      const serializedProps = serializeDeepProps(fiber.memoizedProps) || {};
+      const childCount = countDirectChildren(fiber);
+      const pathText = currentPath.join(" > ");
       return {
         name,
-        props: serializeDeepProps(fiber.memoizedProps) || {},
+        props: serializedProps,
         path: currentPath,
-        childrenCount: countDirectChildren(fiber)
+        pathText,
+        childrenCount: childCount,
+        contexts: [],
+        summary: {
+          pathText,
+          propKeys: Object.keys(serializedProps as Record<string, unknown>),
+          hookCount: 0,
+          contextCount: 0,
+          childrenCount: childCount,
+        },
       };
     }
 
