@@ -154,7 +154,3 @@ The integrated test app also contains dedicated Sprint 6 fixtures for:
 - hook state inspection (`get_component_state`)
 - component/context inspection (`inspect_component`)
 - compact inspection payload validation
-
-## Status
-
-✅ **Sprint 8** — React-Sentinel now ships a richer assertion engine for DOM, React runtime, console, and network validation, plus readable Markdown/JSON validation reports for replay scenarios.
