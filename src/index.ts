@@ -18,6 +18,7 @@ import * as browserTools from "./tools/browser.js";
 import * as diagnosticsTools from "./tools/diagnostics.js";
 import * as networkTools from "./tools/network.js";
 import * as interactionTools from "./tools/interaction.js";
+import * as patchTools from "./tools/patch.js";
 
 // ---------------------------------------------------------------------------
 // Server
@@ -70,7 +71,10 @@ server.tool(
           replay_sandbox: "available",
           replay_interactions: "available",
           validate_scenario: "available",
-          shadow_sandbox: "planned",
+          apply_runtime_patch: "available",
+          apply_patch_then_replay: "available",
+          reset_runtime_patches: "available",
+          shadow_sandbox: "available",
           interaction_simulation: "available",
         },
       });
@@ -116,6 +120,12 @@ networkTools.register(server);
 // ---------------------------------------------------------------------------
 
 interactionTools.register(server);
+
+// ---------------------------------------------------------------------------
+// Shadow sandbox tools (SCRUM-177)
+// ---------------------------------------------------------------------------
+
+patchTools.register(server);
 
 // ---------------------------------------------------------------------------
 // Bootstrap

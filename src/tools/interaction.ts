@@ -11,7 +11,7 @@ import type { Assertion, ValidationScenarioResponse } from "../browser/protocol.
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
-const replayStepSchema = z.discriminatedUnion("action", [
+export const replayStepSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("click"),
     selector: z.string().min(1),
@@ -48,7 +48,7 @@ const interactionSchema = z.object({
   key: z.string().optional(),
 });
 
-const assertionSchema = z.discriminatedUnion("type", [
+export const assertionSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text_present"),
     expected: z.string().min(1),
@@ -122,7 +122,7 @@ function formatAssertion(assertion: Assertion): string {
     case "no_unexpected_http_requests":
       return `no_unexpected_http_requests ${assertion.allowedUrlSubstrings.join(", ")}`;
     default:
-      return `unknown_assertion ${assertion.type}`;
+      return "unknown_assertion";
   }
 }
 

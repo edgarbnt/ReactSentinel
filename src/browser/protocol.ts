@@ -34,6 +34,46 @@ export interface ReplayConfig {
   headless: boolean;
 }
 
+export type RuntimePatchType = "script";
+
+export type RuntimePatchTarget = "page";
+
+export type RuntimePatchSource = "ai-generated" | "manual" | "test";
+
+export interface RuntimePatchMetadata {
+  id?: string;
+  label?: string;
+  source: RuntimePatchSource;
+  expiresWithSession: true;
+}
+
+export interface RuntimePatch {
+  type: RuntimePatchType;
+  target: RuntimePatchTarget;
+  source: string;
+  metadata: RuntimePatchMetadata;
+}
+
+export interface RuntimePatchInfo {
+  id: string;
+  type: RuntimePatchType;
+  target: RuntimePatchTarget;
+  label: string | null;
+  source: RuntimePatchSource;
+  appliedAt: string;
+  sessionId: number;
+  scope: "replay_session";
+}
+
+export interface RuntimePatchExecutionResult {
+  status: "applied" | "already_applied";
+  result: unknown;
+}
+
+export type RuntimePatchTransport = "cdp" | "playwright";
+
+export type RuntimePatchResetStrategy = "reload" | "reset_session";
+
 export interface SessionInfo {
   mode: SessionMode;
   connected: boolean;
@@ -41,7 +81,13 @@ export interface SessionInfo {
   title: string | null;
   replay: {
     active: boolean;
+    sessionId: number | null;
     config: ReplayConfig;
+    patches: {
+      activeCount: number;
+      patchIds: string[];
+      sessionScoped: true;
+    };
   };
   attach: {
     active: boolean;
@@ -363,4 +409,31 @@ export interface ValidationScenarioResponse {
     network: NetworkEvent[];
   };
   summary: ValidationScenarioSummary;
+}
+
+export interface RuntimePatchApplyResponse {
+  session: SessionInfo;
+  url: string | null;
+  patch: RuntimePatchInfo;
+  transport: RuntimePatchTransport;
+  initScriptRegistered: boolean;
+  currentDocument: RuntimePatchExecutionResult;
+  notes: string[];
+}
+
+export interface RuntimePatchResetResponse {
+  session: SessionInfo;
+  strategy: RuntimePatchResetStrategy;
+  removedPatchIds: string[];
+  removedCount: number;
+  reopenedUrl: string | null;
+}
+
+export type PatchedScenarioVerdict = "patch_validated" | "patch_failed";
+
+export interface PatchedValidationScenarioResponse {
+  verdict: PatchedScenarioVerdict;
+  apply: RuntimePatchApplyResponse;
+  report: ValidationScenarioResponse;
+  cleanup?: RuntimePatchResetResponse;
 }

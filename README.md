@@ -94,14 +94,52 @@ Once the endpoint is ready, use `get_attach_tabs` to list the available page tab
 
 ## Replay sandbox tools
 
-- `get_server_info` advertises `replay_sandbox` as available today and keeps `shadow_sandbox` as planned for the later shadow-patching milestone.
+- `get_server_info` advertises both `replay_sandbox` and `shadow_sandbox` as available.
 - `get_session_status` reports whether React-Sentinel is currently using the live attached tab or the isolated replay browser, and exposes the replay headless/headed configuration.
 - `navigate_replay` opens the isolated replay browser, navigates to a URL, waits for `load`, `domcontentloaded`, or `networkidle`, and returns readable navigation errors when the target app is unavailable.
 - `replay_interactions` replays ordered `click`, `type`, `fill`, `wait`, and `press` steps in that replay browser and logs the result of each step.
 - `validate_after_action` now supports richer assertions for DOM, React runtime, console, and network checks after a single interaction.
 - `validate_scenario` runs a multi-step replay plus multiple assertions and returns both a raw JSON report and a readable Markdown report.
+- `apply_runtime_patch` registers an ephemeral JavaScript patch in the replay sandbox without touching local files.
+- `apply_patch_then_replay` applies a patch, runs replay steps, evaluates assertions, and returns an explicit `patch_validated` / `patch_failed` verdict plus a Markdown report.
+- `reset_runtime_patches` removes active replay patches by reloading the clean sandbox page when possible, or by resetting the replay session when stronger cleanup is required.
 
 `navigate_replay` and `replay_interactions` accept `headless` so the same sandbox can run invisibly in automated flows or visibly in a local debugging session.
+
+## Shadow sandbox patch payload (Sprint 9 MVP)
+
+Sprint 9 adds a first ephemeral hot-patch format for the replay sandbox:
+
+```json
+{
+  "patch": {
+    "type": "script",
+    "target": "page",
+    "source": "const originalFetch = window.fetch.bind(window); /* ... */",
+    "metadata": {
+      "id": "mock-error-fix",
+      "label": "mock-api-error-fix",
+      "source": "ai-generated",
+      "expiresWithSession": true
+    }
+  }
+}
+```
+
+- `type: "script"` is the only supported patch type in the Sprint 9 MVP.
+- `target: "page"` is the only supported target; patches run in the replay page main world.
+- `source` is validated before execution and must stay within the MVP size cap.
+- `metadata.expiresWithSession` is mandatory and locks the patch to the replay session lifetime.
+- `metadata.id` is optional but recommended for stable reporting and deduplication.
+
+## Shadow sandbox limits and safety
+
+- **Replay only:** runtime patches never touch repository files and are never applied to the live attach tab.
+- **Session-scoped:** patches are bound to the current replay session and disappear after `reset_runtime_patches` or replay session shutdown.
+- **Supported input:** the MVP accepts JavaScript script bodies only; top-level ES module imports are not supported inside `source`.
+- **Error surfacing:** syntax and runtime failures are returned with a `[runtime_patch:<id>]` prefix so the failing patch is explicit.
+- **Result preview only:** return values are reduced to a serializable preview; complex objects are stringified to a readable placeholder when needed.
+- **Cleanup fallback:** when the sandbox cannot safely remove an init script in place, React-Sentinel falls back to a full replay-session reset to guarantee a clean state.
 
 ## Runtime inspection limits
 
