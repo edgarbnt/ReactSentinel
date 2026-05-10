@@ -101,6 +101,18 @@ Use **Replay** when you want a deterministic, isolated reproduction that does no
 - validate that a selector, network event, or visible message changed as expected;
 - inspect React component state without depending on a pre-existing browser session.
 
+### Agent escalation from replay to sandbox
+
+Use this sequence when the agent needs both diagnosis and fix validation:
+
+1. Reproduce the bug with `navigate_replay` and `replay_interactions`.
+2. Capture the failure with `validate_after_action` or `validate_scenario`.
+3. Read `get_server_info` before attempting a hot patch:
+   - if `shadow_sandbox` is `partial` or `available`, the agent may try a runtime-only patch;
+   - if `shadow_sandbox` is absent or only planned, stop at diagnosis and propose a source change instead.
+4. Prefer `apply_patch_then_replay` when the goal is to test one hypothesis against a known failing sequence.
+5. Use `apply_runtime_patch` directly only when the agent needs to stage multiple patch attempts in the same replay session.
+
 ## 3. Sandbox / hot patch workflow
 
 Use the **Sandbox / hot patch** flow when you want to test a runtime-only fix hypothesis before changing repository files.
@@ -117,6 +129,7 @@ Use the **Sandbox / hot patch** flow when you want to test a runtime-only fix hy
 - Patches are **replay only** and never touch repository files.
 - Patches are **session scoped** and disappear when the replay session resets.
 - The MVP accepts script patches only, executed in the replay page.
+- If `shadow_sandbox` is reported as **partial**, treat that as a hard boundary: stay within script-on-page patches and do not assume broader file or bundle rewriting support.
 
 ### Typical uses
 
