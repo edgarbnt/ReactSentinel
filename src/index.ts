@@ -9,6 +9,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -21,8 +22,21 @@ import * as networkTools from "./tools/network.js";
 import * as interactionTools from "./tools/interaction.js";
 import * as patchTools from "./tools/patch.js";
 
+const require = createRequire(import.meta.url);
+const packageJson = require("../package.json") as { version?: string };
+const packageVersion = packageJson.version;
+const semverPattern =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
 export const REACT_SENTINEL_NAME = "react-sentinel";
-export const REACT_SENTINEL_VERSION = "0.1.0";
+export const REACT_SENTINEL_VERSION =
+  typeof packageVersion === "string" && semverPattern.test(packageVersion)
+    ? packageVersion
+    : "unknown";
+
+if (REACT_SENTINEL_VERSION === "unknown") {
+  console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
+}
 
 type CliCommand = "start" | "doctor" | "help";
 

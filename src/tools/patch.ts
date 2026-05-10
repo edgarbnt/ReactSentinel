@@ -13,8 +13,8 @@ import type { ToolResponse } from "../types.js";
 import { assertionSchema, buildScenarioMarkdown, replayStepSchema } from "./interaction.js";
 
 const runtimePatchSchema = z.object({
-  type: z.literal("script").describe("MVP patch type. Only arbitrary JavaScript runtime scripts are supported in sprint 9."),
-  target: z.literal("page").describe("Patch target. Sprint 9 only supports the replay page main world."),
+  type: z.literal("script").describe("Patch type. Only arbitrary JavaScript runtime scripts are currently supported."),
+  target: z.literal("page").describe("Patch target. Only the replay page main world is currently supported."),
   source: z.string().min(1).max(20_000).describe("JavaScript source executed in the replay page. The script may optionally return a serializable preview value."),
   metadata: z.object({
     id: z.string().regex(/^[A-Za-z0-9._-]+$/).optional().describe("Optional stable patch identifier. Generated automatically when omitted."),
@@ -71,7 +71,7 @@ export function register(server: McpServer): void {
     "apply_runtime_patch",
     [
       "Apply an ephemeral JavaScript patch inside the isolated replay sandbox without touching local files.",
-      "Sprint 9 MVP supports only { type: 'script', target: 'page' } payloads and always scopes them to the current replay session.",
+      "Only { type: 'script', target: 'page' } payloads are currently supported and always scoped to the current replay session.",
       "Provide a URL when the patch must be present before the application boots in the sandbox.",
     ].join(" "),
     {
