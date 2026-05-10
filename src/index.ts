@@ -182,6 +182,10 @@ function formatHelp(): string {
     "  --json                Print doctor results as JSON.",
     "  -h, --help            Show help.",
     "  -v, --version         Show the CLI version.",
+    "",
+    "Examples:",
+    "  npx react-sentinel mcp --headed",
+    "  npx react-sentinel doctor --json",
   ].join("\n");
 }
 
