@@ -19,6 +19,11 @@ import { ok, err } from "./types.js";
 import type { ToolResponse } from "./types.js";
 import { browserManager, DEFAULT_CDP_ENDPOINT } from "./browser/index.js";
 import {
+  createServerInfoPayload,
+  summarizeCapabilities,
+  validateCapabilities,
+} from "./capabilities.js";
+import {
   buildMcpConfigDocument,
   buildMcpServerConfig,
   parseConfigRoot,
@@ -82,67 +87,20 @@ type DetectProjectCommandOptions = {
   targetUrl: string | null;
 };
 
-type CapabilityStatus = "planned" | "partial" | "available";
-
-const serverCapabilities: Record<string, CapabilityStatus> = {
-  browser_ping: "available",
-  get_session_status: "available",
-  get_attach_status: "available",
-  get_attach_tabs: "available",
-  select_attach_tab: "available",
-  navigate_replay: "available",
-  get_runtime_status: "available",
-  get_component_state: "available",
-  get_async_timeline: "available",
-  get_race_condition_diagnosis: "available",
-  get_hydration_issues: "available",
-  get_render_counts: "available",
-  get_render_hotspots: "available",
-  get_hook_changes: "available",
-  get_network_events: "available",
-  get_runtime_timeline: "available",
-  runtime_inspection: "available",
-  render_monitor: "available",
-  replay_sandbox: "available",
-  replay_interactions: "available",
-  validate_scenario: "available",
-  apply_runtime_patch: "available",
-  apply_patch_then_replay: "available",
-  reset_runtime_patches: "available",
-  shadow_sandbox: "available",
-  interaction_simulation: "available",
-};
-
-function createServerInfoPayload(): {
+function buildServerInfoResponse(): {
   name: string;
   version: string;
   transport: "stdio";
-  capabilities: Record<string, CapabilityStatus>;
+  capabilities: Record<string, "planned" | "partial" | "available">;
+  capabilityDetails: ReturnType<typeof createServerInfoPayload>["capabilityDetails"];
+  capabilitiesByMode: ReturnType<typeof createServerInfoPayload>["capabilitiesByMode"];
 } {
   return {
     name: REACT_SENTINEL_NAME,
     version: REACT_SENTINEL_VERSION,
     transport: "stdio",
-    capabilities: { ...serverCapabilities },
+    ...createServerInfoPayload(),
   };
-}
-
-function summarizeCapabilities(capabilities: Record<string, CapabilityStatus>): Record<CapabilityStatus, string[]> {
-  const summary: Record<CapabilityStatus, string[]> = {
-    planned: [],
-    partial: [],
-    available: [],
-  };
-
-  for (const [name, status] of Object.entries(capabilities)) {
-    summary[status].push(name);
-  }
-
-  for (const entries of Object.values(summary)) {
-    entries.sort((left, right) => left.localeCompare(right));
-  }
-
-  return summary;
 }
 
 function createServer(): McpServer {
@@ -170,7 +128,7 @@ function createServer(): McpServer {
     {},
     async (): Promise<ToolResponse> => {
       try {
-        return ok(createServerInfoPayload());
+        return ok(buildServerInfoResponse());
       } catch (e) {
         return err(`get_server_info failed: ${String(e)}`);
       }
@@ -212,7 +170,7 @@ export async function startServer(options?: StartCommandOptions): Promise<void> 
     `[react-sentinel] MCP server started (stdio transport, replay ${options?.replayHeadless === false ? "headed" : "headless"}, CDP ${browserManager.getDefaultCdpEndpoint()}) ✅`
   );
   if (options?.verbose) {
-    const payload = createServerInfoPayload();
+    const payload = buildServerInfoResponse();
     console.error(
       `[react-sentinel] Verbose startup metadata ${JSON.stringify({
         command: "mcp",
@@ -221,6 +179,7 @@ export async function startServer(options?: StartCommandOptions): Promise<void> 
         cdpEndpoint: browserManager.getDefaultCdpEndpoint(),
         capabilitySummary: summarizeCapabilities(payload.capabilities),
         capabilities: payload.capabilities,
+        capabilitiesByMode: payload.capabilitiesByMode,
       })}`
     );
   }
@@ -467,6 +426,7 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
   }
 
   const attachCheck = await browserManager.getAttachStatus(options.cdpEndpoint);
+  const capabilitiesCheck = validateCapabilities();
   let configCheck:
     | undefined
     | {
@@ -546,6 +506,7 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
             error: attachCheck.error,
             help: attachCheck.help,
           },
+      capabilities: capabilitiesCheck,
       ...(configCheck ? { mcpConfig: configCheck } : {}),
     },
   };
@@ -565,10 +526,19 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
       report.checks.attachEndpoint.status === "pass"
         ? `PASS attach endpoint ready at ${report.checks.attachEndpoint.endpoint}`
         : `WARN attach endpoint ${report.checks.attachEndpoint.error}`,
+      report.checks.capabilities.status === "pass"
+        ? `PASS capability registry matches ${report.checks.capabilities.registeredTools.length} registered MCP tools`
+        : "FAIL capability registry is inconsistent with the registered MCP tools",
     ];
 
     if (report.checks.attachEndpoint.status !== "pass") {
       lines.push(`Hint: ${report.checks.attachEndpoint.help}`);
+    }
+
+    if (report.checks.capabilities.status === "fail") {
+      for (const issue of report.checks.capabilities.issues) {
+        lines.push(`Hint: ${issue}`);
+      }
     }
 
     if (configCheck) {
@@ -590,6 +560,7 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
   if (
     report.checks.node.status === "fail" ||
     report.checks.replayBrowser.status === "fail" ||
+    report.checks.capabilities.status === "fail" ||
     configCheck?.status === "fail"
   ) {
     process.exitCode = 1;

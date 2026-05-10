@@ -66,6 +66,12 @@ function buildPatchMarkdown(
   return lines.join("\n");
 }
 
+export const PATCH_TOOL_NAMES = [
+  "apply_runtime_patch",
+  "apply_patch_then_replay",
+  "reset_runtime_patches",
+] as const;
+
 export function register(server: McpServer): void {
   server.tool(
     "apply_runtime_patch",

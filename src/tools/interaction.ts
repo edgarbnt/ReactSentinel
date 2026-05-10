@@ -174,6 +174,13 @@ export function buildScenarioMarkdown(report: ValidationScenarioResponse): strin
   return lines.join("\n");
 }
 
+export const INTERACTION_TOOL_NAMES = [
+  "simulate_interaction",
+  "validate_after_action",
+  "validate_scenario",
+  "replay_interactions",
+] as const;
+
 export function register(server: McpServer): void {
   // -------------------------------------------------------------------------
   // Tool: simulate_interaction

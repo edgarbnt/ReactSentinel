@@ -30,6 +30,15 @@ const replayWaitUntilSchema = z
   .enum(["load", "domcontentloaded", "networkidle"])
   .default("domcontentloaded");
 
+export const BROWSER_TOOL_NAMES = [
+  "get_session_status",
+  "navigate_replay",
+  "get_attach_status",
+  "browser_ping",
+  "get_attach_tabs",
+  "select_attach_tab",
+] as const;
+
 export function register(server: McpServer): void {
   // -------------------------------------------------------------------------
   // Tool: get_session_status
