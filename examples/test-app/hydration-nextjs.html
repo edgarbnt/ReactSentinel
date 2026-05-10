@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>React-Sentinel Hydration Mismatch Demo</title>
+  </head>
+  <body style="margin: 0; background: #f8fafc; color: #0f172a; font-family: sans-serif">
+    <main style="max-width: 760px; margin: 0 auto; padding: 2rem">
+      <h1>Next.js Hydration Mismatch Demo</h1>
+      <p>
+        This page intentionally starts from a server snapshot and hydrates to a different client tree so
+        React emits hydration warnings.
+      </p>
+      <p>
+        Open this URL through React-Sentinel and inspect the runtime console or hydration tools after page
+        load.
+      </p>
+
+      <div id="hydration-root">
+        <section
+          id="hydration-demo-card"
+          data-render-origin="server"
+          style="margin-top: 1rem; padding: 1rem; border: 1px solid #f97316; border-radius: 12px; background: white"
+        >
+          <h2 id="hydration-demo-title">SSR shell</h2>
+          <p id="hydration-demo-message">Welcome from the server snapshot.</p>
+          <ul style="padding-left: 1.25rem">
+            <li id="hydration-demo-locale">Locale: fr-FR</li>
+            <li id="hydration-demo-mode">Mode: server</li>
+            <li id="hydration-demo-build">Build: ssr-shell</li>
+          </ul>
+        </section>
+      </div>
+
+      <div
+        id="hydration-demo-notes"
+        style="margin-top: 1rem; padding: 1rem; border-radius: 12px; background: #e2e8f0; font-size: 0.95rem"
+      >
+        Expected runtime signal: React warns that the hydrated client output does not match the server HTML.
+      </div>
+    </main>
+
+    <script type="module" src="/src/hydration-nextjs.tsx"></script>
+  </body>
+</html>

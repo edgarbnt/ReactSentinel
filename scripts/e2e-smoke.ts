@@ -45,6 +45,7 @@ async function main(): Promise<void> {
   const checks: string[] = [];
   let transport: StdioClientTransport | null = null;
   const serverLogs: string[] = [];
+  const hydrationDemoUrl = new URL("/hydration-nextjs.html", demoUrl).toString();
 
   try {
     const demo = await ensureDemoApp(managedProcesses);
@@ -422,6 +423,29 @@ async function main(): Promise<void> {
     assert(patchedReplay.verdict === "patch_validated", "apply_patch_then_replay did not return patch_validated.");
     assert(patchedReplay.cleanup?.strategy === "reset_session", "apply_patch_then_replay cleanup strategy mismatch.");
     checks.push("apply_patch_then_replay:ok");
+
+    expectToolSuccess(
+      await callTool(client, "navigate_replay", {
+        url: hydrationDemoUrl,
+        resetSession: true,
+      }),
+      "navigate_replay(hydration)"
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const hydrationConsoleEvents = expectToolSuccess(
+      await callTool(client, "get_console_events", { url: hydrationDemoUrl }),
+      "get_console_events(hydration)"
+    ) as { events: { type: string; text: string }[] };
+    assert(
+      hydrationConsoleEvents.events.some(
+        (event) =>
+          (event.type === "error" || event.type === "exception") &&
+          /hydration|server html|did not match/i.test(event.text)
+      ),
+      "Hydration mismatch demo did not emit a detectable hydration warning or exception."
+    );
+    checks.push("hydration-mismatch:ok");
 
     console.log(
       JSON.stringify(
