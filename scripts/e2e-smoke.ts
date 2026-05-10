@@ -80,8 +80,10 @@ async function main(): Promise<void> {
 
     const serverInfo = expectToolSuccess(await callTool(client, "get_server_info"), "get_server_info") as {
       capabilities: Record<string, string>;
+      capabilityDetails: Record<string, { tools: string[]; modes: string[] }>;
+      capabilitiesByMode: Record<string, Record<string, string[]>>;
     };
-    assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
+    assert(serverInfo.capabilities.shadow_sandbox === "partial", "shadow_sandbox capability should report partial support.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
     assert(serverInfo.capabilities.get_async_timeline === "available", "get_async_timeline capability missing.");
     assert(
@@ -92,6 +94,14 @@ async function main(): Promise<void> {
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
     assert(serverInfo.capabilities.get_hook_changes === "available", "get_hook_changes capability missing.");
+    assert(
+      serverInfo.capabilityDetails.apply_patch_then_replay?.tools.includes("apply_patch_then_replay"),
+      "apply_patch_then_replay capability is not mapped to its MCP tool."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.sandbox?.available?.includes("apply_patch_then_replay"),
+      "sandbox capability map is missing apply_patch_then_replay."
+    );
     checks.push("get_server_info:ok");
 
     const echo = expectToolSuccess(await callTool(client, "echo", { message: "react-sentinel-e2e" }), "echo") as {
