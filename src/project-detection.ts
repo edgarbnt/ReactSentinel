@@ -9,6 +9,13 @@ export type RelevantScript = {
   recommendation: "recommended" | "supported";
 };
 
+export type DevServerDetection = {
+  activeUrl: string | null;
+  suggestedUrl: string | null;
+  suggestions: string[];
+  source: string | null;
+};
+
 export type ProjectCandidate = {
   root: string;
   packageJsonPath: string;
@@ -17,6 +24,7 @@ export type ProjectCandidate = {
   score: number;
   evidence: string[];
   scripts: RelevantScript[];
+  devServer: DevServerDetection;
 };
 
 type PackageJson = {
@@ -106,6 +114,12 @@ function detectFramework(packageJsonPath: string, manifest: PackageJson): Projec
     score,
     evidence,
     scripts,
+    devServer: {
+      activeUrl: null,
+      suggestedUrl: null,
+      suggestions: [],
+      source: null,
+    },
   };
 }
 
@@ -132,6 +146,7 @@ export async function detectProjectCandidates(baseDir: string): Promise<ProjectC
     const manifest = JSON.parse(await readFile(packageJsonPath, "utf8")) as PackageJson;
     const candidate = detectFramework(packageJsonPath, manifest);
     if (candidate) {
+      candidate.devServer = await detectDevServer(candidate);
       candidates.push(candidate);
     }
   }
@@ -145,4 +160,78 @@ export async function detectProjectCandidates(baseDir: string): Promise<ProjectC
   });
 
   return candidates;
+}
+
+function detectPortFromCommand(command: string): number | null {
+  const patterns = [
+    /--port(?:=|\s+)(\d{2,5})/,
+    /-p\s+(\d{2,5})/,
+    /\bPORT=(\d{2,5})\b/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = command.match(pattern);
+    if (match) {
+      return Number(match[1]);
+    }
+  }
+
+  return null;
+}
+
+function buildUrlSuggestions(candidate: ProjectCandidate): { suggestions: string[]; source: string | null } {
+  const suggestions = new Set<string>();
+  let source: string | null = null;
+
+  for (const script of candidate.scripts) {
+    const detectedPort = detectPortFromCommand(script.command);
+    if (detectedPort) {
+      suggestions.add(`http://127.0.0.1:${detectedPort}`);
+      source ??= `script:${script.name}`;
+    }
+  }
+
+  if (suggestions.size === 0) {
+    const defaultPort = candidate.framework === "vite-react" ? 5173 : 3000;
+    suggestions.add(`http://127.0.0.1:${defaultPort}`);
+    source = `${candidate.framework}:default-port`;
+  }
+
+  return {
+    suggestions: Array.from(suggestions),
+    source,
+  };
+}
+
+async function probeReachableUrl(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      signal: AbortSignal.timeout(1000),
+    });
+    return response.status >= 200 && response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+async function detectDevServer(candidate: ProjectCandidate): Promise<DevServerDetection> {
+  const { suggestions, source } = buildUrlSuggestions(candidate);
+  for (const url of suggestions) {
+    if (await probeReachableUrl(url)) {
+      return {
+        activeUrl: url,
+        suggestedUrl: suggestions[0] ?? null,
+        suggestions,
+        source,
+      };
+    }
+  }
+
+  return {
+    activeUrl: null,
+    suggestedUrl: suggestions[0] ?? null,
+    suggestions,
+    source,
+  };
 }

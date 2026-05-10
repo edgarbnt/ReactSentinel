@@ -667,6 +667,16 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
     );
   }
 
+  if (selected.devServer.activeUrl) {
+    lines.push(`Active dev server: ${selected.devServer.activeUrl}`);
+  } else if (selected.devServer.suggestedUrl) {
+    lines.push(`Suggested dev server: ${selected.devServer.suggestedUrl}`);
+  }
+
+  if (selected.devServer.source) {
+    lines.push(`URL source: ${selected.devServer.source}`);
+  }
+
   if (candidates.length > 1) {
     lines.push(`Other candidates: ${candidates.slice(1).map((candidate) => candidate.root).join(", ")}`);
   }
