@@ -203,6 +203,7 @@ export class BrowserManager {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private replayHeadless = true;
+  private defaultCdpEndpoint = DEFAULT_CDP_ENDPOINT;
   private replaySessionId: number | null = null;
   private nextReplaySessionId = 1;
   private attachedBrowser: Browser | null = null;
@@ -549,6 +550,23 @@ export class BrowserManager {
     console.error(
       `[react-sentinel] Replay browser launched (${this.replayHeadless ? "headless" : "headed"} chromium, persistent session)`
     );
+  }
+
+  configureDefaults(options: {
+    replayHeadless?: boolean;
+    cdpEndpoint?: string;
+  }): void {
+    if (typeof options.replayHeadless === "boolean") {
+      this.replayHeadless = options.replayHeadless;
+    }
+
+    if (typeof options.cdpEndpoint === "string") {
+      this.defaultCdpEndpoint = options.cdpEndpoint;
+    }
+  }
+
+  getDefaultCdpEndpoint(): string {
+    return this.defaultCdpEndpoint;
   }
 
   private setupListeners(page: Page): void {
@@ -974,7 +992,7 @@ export class BrowserManager {
   }
 
   async getAttachStatus(
-    endpoint: string = DEFAULT_CDP_ENDPOINT
+    endpoint: string = this.defaultCdpEndpoint
   ): Promise<AttachStatus> {
     const checkedAt = new Date().toISOString();
     const help = BrowserManager.buildAttachHelpMessage();
@@ -1028,7 +1046,7 @@ export class BrowserManager {
   }
 
   async getAttachTabs(
-    endpoint: string = DEFAULT_CDP_ENDPOINT,
+    endpoint: string = this.defaultCdpEndpoint,
     urlFilter?: string,
     titleFilter?: string
   ): Promise<AttachTabsResponse | { error: string }> {
@@ -1081,7 +1099,7 @@ export class BrowserManager {
   }
 
   async selectAttachTab(
-    endpoint: string = DEFAULT_CDP_ENDPOINT,
+    endpoint: string = this.defaultCdpEndpoint,
     selector: AttachTabSelector,
     confirm: boolean = false
   ): Promise<AttachTabSelectionResponse | { error: string }> {
