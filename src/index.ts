@@ -16,6 +16,12 @@ import { z } from "zod";
 import { ok, err } from "./types.js";
 import type { ToolResponse } from "./types.js";
 import { browserManager, DEFAULT_CDP_ENDPOINT } from "./browser/index.js";
+import {
+  buildMcpConfigDocument,
+  renderMcpConfigDocument,
+  type McpClient,
+  type McpInstallMode,
+} from "./mcp-config.js";
 import * as browserTools from "./tools/browser.js";
 import * as diagnosticsTools from "./tools/diagnostics.js";
 import * as networkTools from "./tools/network.js";
@@ -38,7 +44,7 @@ if (REACT_SENTINEL_VERSION === "unknown") {
   console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
 }
 
-type CliCommand = "start" | "mcp" | "doctor" | "help";
+type CliCommand = "start" | "mcp" | "init-mcp" | "doctor" | "help";
 
 type StartCommandOptions = {
   replayHeadless: boolean;
@@ -49,6 +55,13 @@ type StartCommandOptions = {
 type DoctorCommandOptions = {
   cdpEndpoint: string;
   json: boolean;
+};
+
+type InitMcpCommandOptions = {
+  client: McpClient;
+  mode: McpInstallMode;
+  serverName: string;
+  replayHeadless: boolean;
 };
 
 type CapabilityStatus = "planned" | "partial" | "available";
@@ -211,12 +224,14 @@ function formatHelp(): string {
     "Usage:",
     "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
+    "  react-sentinel init-mcp [--client <claude-code|claude-desktop>] [--mode <local|global|npx>]",
     "  react-sentinel doctor [--cdp-endpoint <url>] [--json]",
     "  react-sentinel help",
     "",
     "Commands:",
     "  start   Start the MCP server over stdio (default command).",
     "  mcp     Explicit stdio MCP server command for agent/client configs.",
+    "  init-mcp  Print a ready-to-paste MCP config snippet for Claude-compatible clients.",
     "  doctor  Check the local replay browser runtime and optional CDP attach endpoint.",
     "  help    Show this help message.",
     "",
@@ -226,12 +241,16 @@ function formatHelp(): string {
     "  --headless            Force replay sessions to stay headless (default).",
     "  --verbose             Print agent-friendly startup metadata to stderr.",
     "  --json                Print doctor results as JSON.",
+    "  --client <name>       Target MCP client for init-mcp (claude-code or claude-desktop).",
+    "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
+    "  --server-name <name>  Server key used inside the generated mcpServers object.",
     "  -h, --help            Show help.",
     "  -v, --version         Show the CLI version.",
     "",
     "Examples:",
     "  npx react-sentinel mcp --headed",
     "  npx react-sentinel doctor --json",
+    "  react-sentinel init-mcp --client claude-desktop --mode local",
   ].join("\n");
 }
 
@@ -275,6 +294,52 @@ function parseStartOptions(args: string[]): { options: StartCommandOptions; help
       replayHeadless: parsed.values.headed ? false : true,
       cdpEndpoint: parseCdpEndpoint(parsed.values["cdp-endpoint"]),
       verbose: parsed.values.verbose,
+    },
+    help: parsed.values.help,
+    version: parsed.values.version,
+  };
+}
+
+function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; help: boolean; version: boolean } {
+  const parsed = parseArgs({
+    args,
+    allowPositionals: false,
+    options: {
+      client: { type: "string" },
+      mode: { type: "string" },
+      "server-name": { type: "string" },
+      headless: { type: "boolean", default: false },
+      headed: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+      version: { type: "boolean", short: "v", default: false },
+    },
+  });
+
+  if (parsed.values.headless && parsed.values.headed) {
+    throw new Error("Choose either --headless or --headed, not both.");
+  }
+
+  const client = parsed.values.client ?? "claude-desktop";
+  if (client !== "claude-code" && client !== "claude-desktop") {
+    throw new Error(`Invalid value for --client: "${client}". Use "claude-code" or "claude-desktop".`);
+  }
+
+  const mode = parsed.values.mode ?? "local";
+  if (mode !== "local" && mode !== "global" && mode !== "npx") {
+    throw new Error(`Invalid value for --mode: "${mode}". Use "local", "global", or "npx".`);
+  }
+
+  const serverName = parsed.values["server-name"] ?? REACT_SENTINEL_NAME;
+  if (!serverName.trim()) {
+    throw new Error("Invalid value for --server-name: it must not be empty.");
+  }
+
+  return {
+    options: {
+      client,
+      mode,
+      serverName,
+      replayHeadless: parsed.values.headed ? false : true,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -395,6 +460,7 @@ async function runCli(argv: string[]): Promise<void> {
     if (
       candidateCommand === "start" ||
       candidateCommand === "mcp" ||
+      candidateCommand === "init-mcp" ||
       candidateCommand === "doctor" ||
       candidateCommand === "help"
     ) {
@@ -422,6 +488,30 @@ async function runCli(argv: string[]): Promise<void> {
     }
 
     await startServer(parsed.options);
+    return;
+  }
+
+  if (command === "init-mcp") {
+    const parsed = parseInitMcpOptions(commandArgs);
+    if (parsed.version) {
+      console.log(REACT_SENTINEL_VERSION);
+      return;
+    }
+    if (parsed.help) {
+      console.log(formatHelp());
+      return;
+    }
+
+    console.log(
+      renderMcpConfigDocument(
+        buildMcpConfigDocument({
+          client: parsed.options.client,
+          mode: parsed.options.mode,
+          serverName: parsed.options.serverName,
+          replayHeadless: parsed.options.replayHeadless,
+        })
+      )
+    );
     return;
   }
 
