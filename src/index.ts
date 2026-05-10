@@ -181,7 +181,7 @@ function parseCdpEndpoint(rawEndpoint: string | undefined): string {
     return endpoint;
   } catch {
     throw new Error(
-      `Invalid value for --cdp-endpoint: "${endpoint}". Expected a valid URL such as ${DEFAULT_CDP_ENDPOINT}.`
+      `Invalid value for --cdp-endpoint: "${endpoint}". It must be an absolute URL, for example ${DEFAULT_CDP_ENDPOINT}.`
     );
   }
 }
@@ -307,10 +307,7 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
     ];
 
     if (report.checks.attachEndpoint.status !== "pass") {
-      const { error, help } = report.checks.attachEndpoint;
-      if (!error || !error.includes(help)) {
-        lines.push(`Hint: ${help}`);
-      }
+      lines.push(`Hint: ${report.checks.attachEndpoint.help}`);
     }
 
     console.log(lines.join("\n"));
