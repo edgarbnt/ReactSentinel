@@ -42,16 +42,33 @@ Playwright is already declared in the workspace dependencies. If Chromium is mis
 npx playwright install chromium
 ```
 
-### 2. Start the MCP server (development mode)
+### 2. Build once and run the local doctor
+
+```bash
+npm run build
+node dist/index.js doctor
+```
+
+`doctor` validates the local Node runtime, checks that the replay browser can launch, and warns if Chrome CDP is not available yet. A CDP warning is expected if you only plan to use replay mode.
+
+### 3. Start the MCP server
+
+Stable local CLI:
+
+```bash
+node dist/index.js start --headed
+```
+
+Development mode with hot reload:
 
 ```bash
 pnpm dev
 ```
 
 The server starts on **stdio transport** — it waits for MCP messages from a connected client.  
-You should see in stderr: `[react-sentinel] MCP server started (stdio transport) ✅`
+You should see in stderr: `[react-sentinel] MCP server started (stdio transport...) ✅`
 
-### 3. Start the test app
+### 4. Start the test app
 
 Open a second terminal:
 
@@ -63,7 +80,7 @@ pnpm dev          # starts Vite on http://localhost:5173
 
 The test app is a minimal React 18 page used as a live inspection fixture.
 
-### 3b. Run the one-command E2E smoke test
+### 4b. Run the one-command E2E smoke test
 
 ```bash
 npm run e2e:smoke
@@ -71,7 +88,7 @@ npm run e2e:smoke
 
 This runner starts from the MCP client side, talks to the server over stdio, and verifies the end-to-end concept against the demo app. See [`docs/scenarios/e2e-smoke.md`](docs/scenarios/e2e-smoke.md) for the exact coverage.
 
-### 3c. Run the diagnosis-only benchmark
+### 4c. Run the diagnosis-only benchmark
 
 ```bash
 npm run e2e:diagnose
@@ -79,7 +96,7 @@ npm run e2e:diagnose
 
 This benchmark verifies the "find the problem before fixing it" promise: the agent must reproduce a bug, inspect MCP runtime signals, and conclude on the root cause without editing the app. See [`docs/scenarios/diagnosis-benchmark.md`](docs/scenarios/diagnosis-benchmark.md).
 
-### 4. Connect your MCP client
+### 5. Connect your MCP client
 
 **Claude Desktop** — add to `claude_desktop_config.json`:
 
@@ -88,15 +105,15 @@ This benchmark verifies the "find the problem before fixing it" promise: the age
   "mcpServers": {
     "react-sentinel": {
       "command": "node",
-      "args": ["--import", "tsx/esm", "/absolute/path/to/ReactSentinel/src/index.ts"]
+      "args": ["/absolute/path/to/ReactSentinel/dist/index.js", "start", "--headed"]
     }
   }
 }
 ```
 
-> Restart Claude Desktop after saving the config. The `react-sentinel` tools will appear in the tool list.
+> Restart Claude Desktop after saving the config. The `react-sentinel` tools will appear in the tool list. For a source-based development setup, you can still point your client at `src/index.ts` through `tsx`.
 
-### 5. Optional: attach to a live Chrome session
+### 6. Optional: attach to a live Chrome session
 
 To inspect the browser you are already using, start Chrome with remote debugging enabled:
 
@@ -104,9 +121,11 @@ To inspect the browser you are already using, start Chrome with remote debugging
 google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-cdp
 ```
 
-Then call `get_attach_status` to check whether the CDP endpoint is reachable. If it is not, the tool returns a clear error plus the launch command above.
+Then call `get_attach_status` to check whether the CDP endpoint is reachable. If it is not, the tool returns a launch command and tells you to keep using replay mode until Chrome attach is ready.
 
 Once the endpoint is ready, use `get_attach_tabs` to list the available page tabs and `select_attach_tab` to pick one by index, URL, or title. The first `select_attach_tab` response is a consent preview: it explains that React-Sentinel will inspect the selected tab's runtime signals and may run interaction tools in that same tab. Re-run `select_attach_tab` with `confirm: true` to enable live browser mode for that tab. After consent is recorded, the runtime inspection and interaction tools reuse only that live tab instead of opening the isolated sandbox browser. If the tab closes, React-Sentinel clears the selection and asks you to choose a tab again.
+
+If you get stuck during local setup, use the [local diagnostics checklist](docs/local-diagnostics-checklist.md).
 
 ## Replay sandbox tools
 
