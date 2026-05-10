@@ -107,20 +107,53 @@ This benchmark verifies the "find the problem before fixing it" promise: the age
 
 ### 5. Connect your MCP client
 
-**Claude Desktop** — add to `claude_desktop_config.json`:
+React-Sentinel now supports three stdio launch variants for MCP clients:
+
+| Variant | Best when | Generated command |
+|---|---|---|
+| **local** | You are running from this checkout or from a local package install | `node /absolute/path/to/ReactSentinel/dist/index.js mcp --headless` |
+| **global** | You installed `react-sentinel` globally | `react-sentinel mcp --headless` |
+| **npx** | You want zero permanent install on the client machine | `npx -y react-sentinel mcp --headless` |
+
+Generate a ready-to-paste snippet instead of hand-writing JSON:
+
+```bash
+node dist/index.js init-mcp --client claude-desktop --mode local
+node dist/index.js init-mcp --client claude-code --mode npx
+```
+
+Write the config directly to the default client file:
+
+```bash
+node dist/index.js init-mcp --client claude-desktop --mode local --write
+node dist/index.js init-mcp --client claude-code --mode npx --write
+```
+
+By default:
+
+- **Claude Desktop** writes to `~/.config/Claude/claude_desktop_config.json` on Linux, `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, and `%APPDATA%\Claude\claude_desktop_config.json` on Windows.
+- **Claude Code** writes to `.mcp.json` in the current directory so the config stays project-scoped unless you override it with `--config-path`.
+
+Validate an existing config before restarting your client:
+
+```bash
+node dist/index.js doctor --config-path ~/.config/Claude/claude_desktop_config.json
+```
+
+**Claude Desktop** config shape:
 
 ```json
 {
   "mcpServers": {
     "react-sentinel": {
       "command": "node",
-      "args": ["/absolute/path/to/ReactSentinel/dist/index.js", "start", "--headed"]
+      "args": ["/absolute/path/to/ReactSentinel/dist/index.js", "mcp", "--headless"]
     }
   }
 }
 ```
 
-> Restart Claude Desktop after saving the config. The `react-sentinel` tools will appear in the tool list. For a source-based development setup, you can still point your client at `src/index.ts` through `tsx`.
+> Use `--mode local` for this repository checkout, `--mode global` after a global install, and `--mode npx` when the client should fetch React-Sentinel on demand. Add `--headed` to `init-mcp` if you want the generated snippet to open visible replay browsers by default.
 
 ### 6. Optional: attach to a live Chrome session
 

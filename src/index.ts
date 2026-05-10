@@ -25,6 +25,7 @@ import {
   renderMcpConfigDocument,
   resolveDefaultConfigPath,
   type McpClient,
+  validateServerConfig,
   type McpInstallMode,
   upsertServerConfig,
 } from "./mcp-config.js";
@@ -60,7 +61,9 @@ type StartCommandOptions = {
 
 type DoctorCommandOptions = {
   cdpEndpoint: string;
+  configPath: string | null;
   json: boolean;
+  serverName: string;
 };
 
 type InitMcpCommandOptions = {
@@ -249,6 +252,7 @@ function formatHelp(): string {
     "  --headless            Force replay sessions to stay headless (default).",
     "  --verbose             Print agent-friendly startup metadata to stderr.",
     "  --json                Print doctor results as JSON.",
+    "  --config-path <path>  Validate an existing MCP config file during doctor or init-mcp --write.",
     "  --client <name>       Target MCP client for init-mcp (claude-code or claude-desktop).",
     "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
     "  --server-name <name>  Server key used inside the generated mcpServers object.",
@@ -260,6 +264,7 @@ function formatHelp(): string {
     "Examples:",
     "  npx react-sentinel mcp --headed",
     "  npx react-sentinel doctor --json",
+    "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
     "  react-sentinel init-mcp --client claude-desktop --mode local",
   ].join("\n");
 }
@@ -366,16 +371,25 @@ function parseDoctorOptions(args: string[]): { options: DoctorCommandOptions; he
     allowPositionals: false,
     options: {
       "cdp-endpoint": { type: "string" },
+      "config-path": { type: "string" },
       json: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
+      "server-name": { type: "string" },
       version: { type: "boolean", short: "v", default: false },
     },
   });
 
+  const serverName = parsed.values["server-name"] ?? REACT_SENTINEL_NAME;
+  if (!serverName.trim()) {
+    throw new Error("Invalid value for --server-name: it must not be empty.");
+  }
+
   return {
     options: {
       cdpEndpoint: parseCdpEndpoint(parsed.values["cdp-endpoint"]),
+      configPath: parsed.values["config-path"] ?? null,
       json: parsed.values.json,
+      serverName,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -408,6 +422,60 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
   }
 
   const attachCheck = await browserManager.getAttachStatus(options.cdpEndpoint);
+  let configCheck:
+    | undefined
+    | {
+        status: "pass";
+        path: string;
+        serverName: string;
+        command: string;
+        args: string[];
+      }
+    | {
+        status: "fail";
+        path: string;
+        serverName: string;
+        issues: string[];
+      };
+
+  if (options.configPath) {
+    try {
+      const root = parseConfigRoot(await readFile(options.configPath, "utf8"));
+      const validation = validateServerConfig(root, options.serverName);
+      configCheck =
+        validation.status === "pass"
+          ? {
+              status: "pass",
+              path: options.configPath,
+              serverName: options.serverName,
+              command: validation.command ?? "unknown",
+              args: validation.args ?? [],
+            }
+          : {
+              status: "fail",
+              path: options.configPath,
+              serverName: options.serverName,
+              issues: validation.issues,
+            };
+    } catch (error) {
+      const errorCode =
+        typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+          ? error.code
+          : null;
+      configCheck = {
+        status: "fail",
+        path: options.configPath,
+        serverName: options.serverName,
+        issues: [
+          errorCode === "ENOENT"
+            ? `Config file not found at ${options.configPath}.`
+            : error instanceof Error
+              ? error.message
+              : String(error),
+        ],
+      };
+    }
+  }
 
   const report = {
     name: REACT_SENTINEL_NAME,
@@ -433,6 +501,7 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
             error: attachCheck.error,
             help: attachCheck.help,
           },
+      ...(configCheck ? { mcpConfig: configCheck } : {}),
     },
   };
 
@@ -457,10 +526,27 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
       lines.push(`Hint: ${report.checks.attachEndpoint.help}`);
     }
 
+    if (configCheck) {
+      if (configCheck.status === "pass") {
+        lines.push(
+          `PASS mcp config ${configCheck.path} -> ${configCheck.command} ${configCheck.args.join(" ")}`
+        );
+      } else {
+        lines.push(`FAIL mcp config ${configCheck.path}`);
+        for (const issue of configCheck.issues) {
+          lines.push(`Hint: ${issue}`);
+        }
+      }
+    }
+
     console.log(lines.join("\n"));
   }
 
-  if (report.checks.node.status === "fail" || report.checks.replayBrowser.status === "fail") {
+  if (
+    report.checks.node.status === "fail" ||
+    report.checks.replayBrowser.status === "fail" ||
+    configCheck?.status === "fail"
+  ) {
     process.exitCode = 1;
   }
 }

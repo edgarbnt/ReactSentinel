@@ -93,32 +93,42 @@ Use the **Sandbox / hot patch** flow when you want to test a runtime-only fix hy
 
 ## 4. Minimal MCP integration
 
-The MVP local integration is intentionally simple: expose the compiled React-Sentinel CLI to any MCP client that supports stdio transport.
+The zero-config path is now centered on `init-mcp`: generate or write a client snippet that points to the explicit `mcp` stdio command.
 
-### Stable local command
+### Generate the client snippet
 
 ```bash
 npm run build
-node dist/index.js start --headed
+node dist/index.js init-mcp --client claude-desktop --mode local
 ```
 
-### Minimal client configuration
+### Write the config automatically
 
-```json
-{
-  "mcpServers": {
-    "react-sentinel": {
-      "command": "node",
-      "args": ["/absolute/path/to/ReactSentinel/dist/index.js", "start", "--headed"]
-    }
-  }
-}
+```bash
+node dist/index.js init-mcp --client claude-desktop --mode local --write
+node dist/index.js init-mcp --client claude-code --mode npx --write
 ```
 
-### Development variant
+### Launch variants
 
-For source-based development you can still point your client at `src/index.ts` through `tsx`, but the local MVP workflow is now centered on the built CLI entrypoint.
+| Variant | When to use | Generated command |
+|---|---|---|
+| **local** | You are inside this checkout or another local package install | `node /absolute/path/to/dist/index.js mcp --headless` |
+| **global** | `react-sentinel` is installed globally | `react-sentinel mcp --headless` |
+| **npx** | You want the MCP client to fetch React-Sentinel on demand | `npx -y react-sentinel mcp --headless` |
+
+### Verify an existing config
+
+```bash
+node dist/index.js doctor --config-path ~/.config/Claude/claude_desktop_config.json
+```
+
+### Notes
+
+- Claude Desktop keeps the classic `mcpServers` JSON shape and needs a restart after config changes.
+- Claude Code can use the same snippet format in a project-local `.mcp.json` file; override the file path with `--config-path` if you want a different location.
+- For source-based development you can still point a client at `src/index.ts` through `tsx`, but the default workflow now prefers the compiled CLI entrypoint and the dedicated `mcp` command.
 
 ### Scope note
 
-This document covers the **manual local MVP**. The zero-config agent automation layers are intentionally deferred to later sprints.
+This document covers the **manual local MVP plus zero-config client wiring**. Higher-level agent automation still depends on the caller choosing the right attach/replay workflow for the debugging task.
