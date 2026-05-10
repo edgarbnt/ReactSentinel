@@ -151,7 +151,14 @@ export async function detectProjectCandidates(baseDir: string): Promise<ProjectC
   const candidates: ProjectCandidate[] = [];
 
   for (const packageJsonPath of packageJsonFiles) {
-    const manifest = JSON.parse(await readFile(packageJsonPath, "utf8")) as PackageJson;
+    let manifest: PackageJson;
+
+    try {
+      manifest = JSON.parse(await readFile(packageJsonPath, "utf8")) as PackageJson;
+    } catch {
+      continue;
+    }
+
     const candidate = detectFramework(packageJsonPath, manifest);
     if (candidate) {
       candidate.devServer = await detectDevServer(candidate);
