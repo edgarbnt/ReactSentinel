@@ -174,6 +174,18 @@ function readNodeMajorVersion(version: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function parseCdpEndpoint(rawEndpoint: string | undefined): string {
+  const endpoint = rawEndpoint ?? DEFAULT_CDP_ENDPOINT;
+  try {
+    new URL(endpoint);
+    return endpoint;
+  } catch {
+    throw new Error(
+      `Invalid value for --cdp-endpoint: "${endpoint}". Expected a valid URL such as ${DEFAULT_CDP_ENDPOINT}.`
+    );
+  }
+}
+
 function parseStartOptions(args: string[]): { options: StartCommandOptions; help: boolean; version: boolean } {
   const parsed = parseArgs({
     args,
@@ -194,7 +206,7 @@ function parseStartOptions(args: string[]): { options: StartCommandOptions; help
   return {
     options: {
       replayHeadless: parsed.values.headed ? false : true,
-      cdpEndpoint: parsed.values["cdp-endpoint"] ?? DEFAULT_CDP_ENDPOINT,
+      cdpEndpoint: parseCdpEndpoint(parsed.values["cdp-endpoint"]),
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -215,7 +227,7 @@ function parseDoctorOptions(args: string[]): { options: DoctorCommandOptions; he
 
   return {
     options: {
-      cdpEndpoint: parsed.values["cdp-endpoint"] ?? DEFAULT_CDP_ENDPOINT,
+      cdpEndpoint: parseCdpEndpoint(parsed.values["cdp-endpoint"]),
       json: parsed.values.json,
     },
     help: parsed.values.help,
@@ -294,11 +306,11 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
         : `WARN attach endpoint ${report.checks.attachEndpoint.error}`,
     ];
 
-    if (
-      report.checks.attachEndpoint.status !== "pass" &&
-      !report.checks.attachEndpoint.error.includes(report.checks.attachEndpoint.help)
-    ) {
-      lines.push(`Hint: ${report.checks.attachEndpoint.help}`);
+    if (report.checks.attachEndpoint.status !== "pass") {
+      const { error, help } = report.checks.attachEndpoint;
+      if (!error || !error.includes(help)) {
+        lines.push(`Hint: ${help}`);
+      }
     }
 
     console.log(lines.join("\n"));
