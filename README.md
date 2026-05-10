@@ -30,6 +30,16 @@ See [docs/workflows.md](docs/workflows.md) for the main MVP workflows:
 - replay-only sandbox hot patching,
 - and the minimal local MCP integration.
 
+## Capability status semantics
+
+`get_server_info` now exposes three capability states:
+
+- **available** — the feature is backed by one or more MCP tools and is ready for normal use. Example: `apply_patch_then_replay`.
+- **partial** — the feature is usable, but intentionally bounded or narrower than the headline suggests. Example: `runtime_inspection` is limited to readable snapshots and selected hook types, and `shadow_sandbox` only supports script-on-page patches.
+- **planned** — the capability name exists for roadmap continuity, but it is not yet backed by a usable MCP tool.
+
+The same payload also exposes `capabilityDetails` and `capabilitiesByMode` so an agent can see which tools back each capability and whether it applies to **attach**, **replay**, or **sandbox** mode.
+
 ## Prerequisites
 
 - **Node.js ≥ 20** — check with `node --version`
@@ -171,7 +181,7 @@ If you get stuck during local setup, use the [local diagnostics checklist](docs/
 
 ## Replay sandbox tools
 
-- `get_server_info` advertises both `replay_sandbox` and `shadow_sandbox` as available.
+- `get_server_info` advertises `replay_sandbox` as available and `shadow_sandbox` as partial because the sandbox currently supports script-on-page runtime patches only.
 - `get_session_status` reports whether React-Sentinel is currently using the live attached tab or the isolated replay browser, and exposes the replay headless/headed configuration.
 - `navigate_replay` opens the isolated replay browser, navigates to a URL, waits for `load`, `domcontentloaded`, or `networkidle`, and returns readable navigation errors when the target app is unavailable.
 - `replay_interactions` replays ordered `click`, `type`, `fill`, `wait`, and `press` steps in that replay browser and logs the result of each step.

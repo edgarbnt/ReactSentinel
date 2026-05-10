@@ -9,6 +9,20 @@ This guide documents the main MVP workflows for a human developer or a guided ag
 | **Sandbox / hot patch** | You want to test a runtime-only hypothesis without editing repository files | `apply_runtime_patch`, `apply_patch_then_replay`, `reset_runtime_patches` |
 | **Minimal MCP integration** | You want to expose React-Sentinel to a local MCP client | `node dist/index.js start --headed` |
 
+## Capability status semantics
+
+Use `get_server_info` when an agent needs to understand what React-Sentinel can do **before** choosing a workflow.
+
+- **available** means the capability is backed by at least one usable MCP tool today.
+- **partial** means the capability is real but intentionally bounded; for example, `runtime_inspection` focuses on readable React snapshots, and `shadow_sandbox` is limited to script-on-page runtime patches.
+- **planned** is reserved for future capability names that are not wired to a usable MCP tool yet.
+
+`get_server_info` now returns both `capabilityDetails` and `capabilitiesByMode`, so an agent can see:
+
+1. which MCP tools back a capability,
+2. whether that capability belongs to attach, replay, or sandbox mode,
+3. and whether the capability is fully available or only partial.
+
 ## 1. Attach workflow
 
 Use **Attach** when the important state already lives in your real browser session: authenticated cookies, local storage, browser extensions, or a page you do not want to rebuild from scratch.
