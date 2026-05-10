@@ -161,7 +161,7 @@ export async function detectProjectCandidates(baseDir: string): Promise<ProjectC
 
     const candidate = detectFramework(packageJsonPath, manifest);
     if (candidate) {
-      candidate.devServer = await detectDevServer(candidate);
+      candidate.devServer = buildDevServerDetection(candidate);
       candidates.push(candidate);
     }
   }
@@ -173,6 +173,11 @@ export async function detectProjectCandidates(baseDir: string): Promise<ProjectC
 
     return left.root.localeCompare(right.root);
   });
+
+  const topCandidate = candidates[0];
+  if (topCandidate) {
+    topCandidate.devServer = await detectDevServer(topCandidate);
+  }
 
   return candidates;
 }
@@ -231,18 +236,21 @@ async function probeReachableUrl(url: string): Promise<boolean> {
 }
 
 async function detectDevServer(candidate: ProjectCandidate): Promise<DevServerDetection> {
-  const { suggestions, source } = buildUrlSuggestions(candidate);
-  for (const url of suggestions) {
+  const detection = buildDevServerDetection(candidate);
+  for (const url of detection.suggestions) {
     if (await probeReachableUrl(url)) {
       return {
+        ...detection,
         activeUrl: url,
-        suggestedUrl: suggestions[0] ?? null,
-        suggestions,
-        source,
       };
     }
   }
 
+  return detection;
+}
+
+function buildDevServerDetection(candidate: ProjectCandidate): DevServerDetection {
+  const { suggestions, source } = buildUrlSuggestions(candidate);
   return {
     activeUrl: null,
     suggestedUrl: suggestions[0] ?? null,
