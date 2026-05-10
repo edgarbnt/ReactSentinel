@@ -38,7 +38,7 @@ if (REACT_SENTINEL_VERSION === "unknown") {
   console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
 }
 
-type CliCommand = "start" | "doctor" | "help";
+type CliCommand = "start" | "mcp" | "doctor" | "help";
 
 type StartCommandOptions = {
   replayHeadless: boolean;
@@ -165,11 +165,13 @@ function formatHelp(): string {
     "",
     "Usage:",
     "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
+    "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel doctor [--cdp-endpoint <url>] [--json]",
     "  react-sentinel help",
     "",
     "Commands:",
     "  start   Start the MCP server over stdio (default command).",
+    "  mcp     Explicit stdio MCP server command for agent/client configs.",
     "  doctor  Check the local replay browser runtime and optional CDP attach endpoint.",
     "  help    Show this help message.",
     "",
@@ -338,7 +340,12 @@ async function runCli(argv: string[]): Promise<void> {
   let commandArgs = argv;
 
   if (candidateCommand && !candidateCommand.startsWith("-")) {
-    if (candidateCommand === "start" || candidateCommand === "doctor" || candidateCommand === "help") {
+    if (
+      candidateCommand === "start" ||
+      candidateCommand === "mcp" ||
+      candidateCommand === "doctor" ||
+      candidateCommand === "help"
+    ) {
       command = candidateCommand;
       commandArgs = rest;
     } else {
@@ -351,7 +358,7 @@ async function runCli(argv: string[]): Promise<void> {
     return;
   }
 
-  if (command === "start") {
+  if (command === "start" || command === "mcp") {
     const parsed = parseStartOptions(commandArgs);
     if (parsed.version) {
       console.log(REACT_SENTINEL_VERSION);
