@@ -23,6 +23,7 @@ import {
   summarizeCapabilities,
   validateCapabilities,
 } from "./capabilities.js";
+import { buildAgentPackManifest, renderAgentPackManifest, type AgentPackManifest } from "./agent-pack.js";
 import {
   buildMcpConfigDocument,
   buildMcpServerConfig,
@@ -57,7 +58,7 @@ if (REACT_SENTINEL_VERSION === "unknown") {
   console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
 }
 
-type CliCommand = "start" | "mcp" | "init-mcp" | "detect-project" | "doctor" | "help";
+type CliCommand = "start" | "mcp" | "init-mcp" | "init-agent-pack" | "detect-project" | "doctor" | "help";
 
 type StartCommandOptions = {
   replayHeadless: boolean;
@@ -85,6 +86,14 @@ type DetectProjectCommandOptions = {
   path: string;
   json: boolean;
   targetUrl: string | null;
+};
+
+type InitAgentPackCommandOptions = {
+  targetDirectory: string;
+  mode: McpInstallMode;
+  serverName: string;
+  replayHeadless: boolean;
+  configPath: string | null;
 };
 
 function buildServerInfoResponse(): {
@@ -202,6 +211,7 @@ function formatHelp(): string {
     "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel init-mcp [--client <claude-code|claude-desktop>] [--mode <local|global|npx>]",
+    "  react-sentinel init-agent-pack [--path <dir>] [--mode <local|global|npx>]",
     "  react-sentinel detect-project [--path <dir>] [--target-url <url>] [--json]",
     "  react-sentinel doctor [--cdp-endpoint <url>] [--json]",
     "  react-sentinel help",
@@ -210,6 +220,7 @@ function formatHelp(): string {
     "  start   Start the MCP server over stdio (default command).",
     "  mcp     Explicit stdio MCP server command for agent/client configs.",
     "  init-mcp  Print a ready-to-paste MCP config snippet for Claude-compatible clients.",
+    "  init-agent-pack  Print the Claude Code-first agent-pack manifest prototype.",
     "  detect-project  Detect likely React, Next.js, or Vite application roots from package.json files.",
     "  doctor  Check the local replay browser runtime and optional CDP attach endpoint.",
     "  help    Show this help message.",
@@ -236,6 +247,7 @@ function formatHelp(): string {
     "  react-sentinel detect-project --path . --target-url http://127.0.0.1:3000 --json",
     "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
     "  react-sentinel init-mcp --client claude-desktop --mode local",
+    "  react-sentinel init-agent-pack --path . --mode npx",
   ].join("\n");
 }
 
@@ -362,6 +374,53 @@ function parseDetectProjectOptions(args: string[]): { options: DetectProjectComm
       path: path.resolve(parsed.values.path ?? process.cwd()),
       json: parsed.values.json,
       targetUrl,
+    },
+    help: parsed.values.help,
+    version: parsed.values.version,
+  };
+}
+
+function parseInitAgentPackOptions(args: string[]): {
+  options: InitAgentPackCommandOptions;
+  help: boolean;
+  version: boolean;
+} {
+  const parsed = parseArgs({
+    args,
+    allowPositionals: false,
+    options: {
+      "config-path": { type: "string" },
+      mode: { type: "string" },
+      "server-name": { type: "string" },
+      headless: { type: "boolean", default: false },
+      headed: { type: "boolean", default: false },
+      help: { type: "boolean", short: "h", default: false },
+      path: { type: "string" },
+      version: { type: "boolean", short: "v", default: false },
+    },
+  });
+
+  if (parsed.values.headless && parsed.values.headed) {
+    throw new Error("Choose either --headless or --headed, not both.");
+  }
+
+  const mode = parsed.values.mode ?? "local";
+  if (mode !== "local" && mode !== "global" && mode !== "npx") {
+    throw new Error(`Invalid value for --mode: "${mode}". Use "local", "global", or "npx".`);
+  }
+
+  const serverName = parsed.values["server-name"] ?? REACT_SENTINEL_NAME;
+  if (!serverName.trim()) {
+    throw new Error("Invalid value for --server-name: it must not be empty.");
+  }
+
+  return {
+    options: {
+      targetDirectory: path.resolve(parsed.values.path ?? process.cwd()),
+      mode,
+      serverName,
+      replayHeadless: parsed.values.headed ? false : true,
+      configPath: parsed.values["config-path"] ?? null,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -681,6 +740,19 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
   console.log(lines.join("\n"));
 }
 
+async function runInitAgentPack(options: InitAgentPackCommandOptions): Promise<void> {
+  const manifest: AgentPackManifest = await buildAgentPackManifest({
+    targetDirectory: options.targetDirectory,
+    reactSentinelVersion: REACT_SENTINEL_VERSION,
+    serverName: options.serverName,
+    mode: options.mode,
+    replayHeadless: options.replayHeadless,
+    configPath: options.configPath,
+  });
+
+  console.log(renderAgentPackManifest(manifest));
+}
+
 async function runCli(argv: string[]): Promise<void> {
   const [candidateCommand, ...rest] = argv;
   let command: CliCommand = "start";
@@ -691,6 +763,7 @@ async function runCli(argv: string[]): Promise<void> {
       candidateCommand === "start" ||
       candidateCommand === "mcp" ||
       candidateCommand === "init-mcp" ||
+      candidateCommand === "init-agent-pack" ||
       candidateCommand === "detect-project" ||
       candidateCommand === "doctor" ||
       candidateCommand === "help"
@@ -734,6 +807,21 @@ async function runCli(argv: string[]): Promise<void> {
     }
 
     await runInitMcp(parsed.options);
+    return;
+  }
+
+  if (command === "init-agent-pack") {
+    const parsed = parseInitAgentPackOptions(commandArgs);
+    if (parsed.version) {
+      console.log(REACT_SENTINEL_VERSION);
+      return;
+    }
+    if (parsed.help) {
+      console.log(formatHelp());
+      return;
+    }
+
+    await runInitAgentPack(parsed.options);
     return;
   }
 
