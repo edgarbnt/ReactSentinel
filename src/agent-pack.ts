@@ -180,7 +180,7 @@ export async function buildAgentPackManifest(options: {
   mode: McpInstallMode;
   replayHeadless: boolean;
   configPath?: string | null;
-}): Promise<AgentPackManifest> {
+}): Promise<{ manifest: AgentPackManifest; templates: AgentPackTemplate[] }> {
   const targetDirectory = path.resolve(options.targetDirectory);
   const templates = await readAgentPackTemplates();
   const configPath = options.configPath
@@ -189,7 +189,7 @@ export async function buildAgentPackManifest(options: {
       : path.resolve(targetDirectory, options.configPath)
     : path.resolve(resolveDefaultConfigPath({ client: "claude-code", cwd: targetDirectory }));
 
-  return {
+  const manifest: AgentPackManifest = {
     formatVersion: 1,
     reactSentinelVersion: options.reactSentinelVersion,
     generatedAt: new Date().toISOString(),
@@ -215,6 +215,8 @@ export async function buildAgentPackManifest(options: {
     },
     profiles: supportedProfiles.map((profile) => ({ ...profile })),
   };
+
+  return { manifest, templates };
 }
 
 export function renderAgentPackManifest(manifest: AgentPackManifest): string {
@@ -238,6 +240,7 @@ export async function installAgentPack(options: {
   targetDirectory: string;
   manifest: AgentPackManifest;
   force?: boolean;
+  templates?: AgentPackTemplate[];
 }): Promise<void> {
   const existingManifest = await readExistingAgentPackManifest(options.targetDirectory);
   const packRoot = resolveAgentPackRoot(options.targetDirectory);
@@ -260,10 +263,7 @@ export async function installAgentPack(options: {
   }
 
   // Write template files
-  type AgentPackTemplates = Awaited<ReturnType<typeof readAgentPackTemplates>>;
-  const templates =
-    (options as { templates?: AgentPackTemplates }).templates ??
-    await readAgentPackTemplates();
+  const templates = options.templates ?? await readAgentPackTemplates();
   for (const template of templates) {
     const targetPath = path.join(packRoot, template.relativePath);
     

@@ -26,7 +26,6 @@ import {
 import {
   buildAgentPackManifest,
   renderAgentPackManifest,
-  type AgentPackManifest,
   installAgentPack,
   uninstallAgentPack,
   readExistingAgentPackManifest,
@@ -236,6 +235,9 @@ function formatHelp(): string {
     "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel init-mcp [--client <claude-code|claude-desktop>] [--mode <local|global|npx>]",
     "  react-sentinel init-agent-pack [--path <dir>] [--mode <local|global|npx>]",
+    "  react-sentinel install-agent-pack [--path <dir>] [--mode <local|global|npx>]",
+    "  react-sentinel update-agent-pack [--path <dir>] [--mode <local|global|npx>]",
+    "  react-sentinel uninstall-agent-pack [--path <dir>]",
     "  react-sentinel detect-project [--path <dir>] [--target-url <url>] [--json]",
     "  react-sentinel doctor [--cdp-endpoint <url>] [--json]",
     "  react-sentinel help",
@@ -245,6 +247,9 @@ function formatHelp(): string {
     "  mcp     Explicit stdio MCP server command for agent/client configs.",
     "  init-mcp  Print a ready-to-paste MCP config snippet for Claude-compatible clients.",
     "  init-agent-pack  Print the Claude Code-first agent-pack manifest prototype.",
+    "  install-agent-pack  Install agent-pack files and write the MCP config entry.",
+    "  update-agent-pack  Re-install agent-pack files, overwriting managed files and the MCP config entry.",
+    "  uninstall-agent-pack  Remove agent-pack files and the managed MCP config entry.",
     "  detect-project  Detect likely React, Next.js, or Vite application roots from package.json files.",
     "  doctor  Check the local replay browser runtime and optional CDP attach endpoint.",
     "  help    Show this help message.",
@@ -262,6 +267,7 @@ function formatHelp(): string {
     "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
     "  --server-name <name>  Server key used inside the generated mcpServers object.",
     "  --write               Write or merge the generated config into a config file.",
+    "  --force               Overwrite existing managed files when using install-agent-pack or update-agent-pack.",
     "  -h, --help            Show help.",
     "  -v, --version         Show the CLI version.",
     "",
@@ -272,6 +278,9 @@ function formatHelp(): string {
     "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
     "  react-sentinel init-mcp --client claude-desktop --mode local",
     "  react-sentinel init-agent-pack --path . --mode npx",
+    "  react-sentinel install-agent-pack --path . --mode local",
+    "  react-sentinel update-agent-pack --path . --mode npx",
+    "  react-sentinel uninstall-agent-pack --path .",
   ].join("\n");
 }
 
@@ -793,7 +802,7 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
 }
 
 async function runInstallAgentPack(options: InitAgentPackCommandOptions): Promise<void> {
-  const manifest: AgentPackManifest = await buildAgentPackManifest({
+  const { manifest, templates } = await buildAgentPackManifest({
     targetDirectory: options.targetDirectory,
     reactSentinelVersion: REACT_SENTINEL_VERSION,
     serverName: options.serverName,
@@ -813,6 +822,7 @@ async function runInstallAgentPack(options: InitAgentPackCommandOptions): Promis
     targetDirectory: options.targetDirectory,
     manifest,
     force: options.force,
+    templates,
   });
   console.log(`Installed agent pack files to ${manifest.packRoot}`);
 
@@ -942,6 +952,8 @@ async function runCli(argv: string[]): Promise<void> {
 
     if (command === "update-agent-pack") {
       parsed.options.force = true;
+      parsed.options.write = true;
+    } else if (command === "install-agent-pack") {
       parsed.options.write = true;
     }
 
