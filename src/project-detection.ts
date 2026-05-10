@@ -3,6 +3,12 @@ import path from "node:path";
 
 export type DetectedFramework = "next" | "vite-react" | "react";
 
+export type RelevantScript = {
+  name: string;
+  command: string;
+  recommendation: "recommended" | "supported";
+};
+
 export type ProjectCandidate = {
   root: string;
   packageJsonPath: string;
@@ -10,12 +16,14 @@ export type ProjectCandidate = {
   framework: DetectedFramework;
   score: number;
   evidence: string[];
+  scripts: RelevantScript[];
 };
 
 type PackageJson = {
   name?: unknown;
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  scripts?: Record<string, string>;
 };
 
 async function findPackageJsonFiles(baseDir: string): Promise<string[]> {
@@ -89,6 +97,7 @@ function detectFramework(packageJsonPath: string, manifest: PackageJson): Projec
     return null;
   }
 
+  const scripts = collectRelevantScripts(manifest.scripts ?? {});
   return {
     root: path.dirname(packageJsonPath),
     packageJsonPath,
@@ -96,7 +105,23 @@ function detectFramework(packageJsonPath: string, manifest: PackageJson): Projec
     framework,
     score,
     evidence,
+    scripts,
   };
+}
+
+function collectRelevantScripts(scripts: Record<string, string>): RelevantScript[] {
+  const preferredOrder = ["dev", "start", "preview", "serve"];
+  const relevantNames = preferredOrder.filter((name) => typeof scripts[name] === "string" && scripts[name].trim());
+  const extras = Object.keys(scripts)
+    .filter((name) => /dev|start|preview|serve/i.test(name) && !relevantNames.includes(name))
+    .sort((left, right) => left.localeCompare(right));
+
+  const orderedNames = [...relevantNames, ...extras];
+  return orderedNames.map((name, index) => ({
+    name,
+    command: scripts[name],
+    recommendation: index === 0 ? "recommended" : "supported",
+  }));
 }
 
 export async function detectProjectCandidates(baseDir: string): Promise<ProjectCandidate[]> {

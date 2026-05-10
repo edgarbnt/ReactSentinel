@@ -659,6 +659,14 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
     `Evidence: ${selected.evidence.join(", ")}`,
   ];
 
+  if (selected.scripts.length > 0) {
+    const recommended = selected.scripts.find((script) => script.recommendation === "recommended") ?? selected.scripts[0];
+    lines.push(`Recommended script: npm run ${recommended.name}`);
+    lines.push(
+      `Relevant scripts: ${selected.scripts.map((script) => `${script.name} -> ${script.command}`).join(" | ")}`
+    );
+  }
+
   if (candidates.length > 1) {
     lines.push(`Other candidates: ${candidates.slice(1).map((candidate) => candidate.root).join(", ")}`);
   }
