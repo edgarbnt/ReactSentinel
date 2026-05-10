@@ -183,9 +183,11 @@ export async function buildAgentPackManifest(options: {
 }): Promise<AgentPackManifest> {
   const targetDirectory = path.resolve(options.targetDirectory);
   const templates = await readAgentPackTemplates();
-  const configPath = path.resolve(
-    options.configPath ?? resolveDefaultConfigPath({ client: "claude-code", cwd: targetDirectory })
-  );
+  const configPath = options.configPath
+    ? path.isAbsolute(options.configPath)
+      ? options.configPath
+      : path.resolve(targetDirectory, options.configPath)
+    : path.resolve(resolveDefaultConfigPath({ client: "claude-code", cwd: targetDirectory }));
 
   return {
     formatVersion: 1,
