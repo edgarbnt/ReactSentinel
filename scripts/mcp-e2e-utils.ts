@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { access } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -22,6 +23,12 @@ export type ManagedProcess = {
   name: string;
   child: ChildProcess;
   logs: string[];
+};
+
+export type ServerLaunchInfo = {
+  mode: "compiled-mcp" | "source-mcp";
+  command: string;
+  args: string[];
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -190,11 +197,29 @@ export async function stopProcess(processHandle: ManagedProcess): Promise<void> 
 export async function connectMcpClient(
   serverLogs: string[],
   clientInfo: { name: string; version: string }
-): Promise<{ client: Client; transport: StdioClientTransport }> {
+): Promise<{ client: Client; transport: StdioClientTransport; launch: ServerLaunchInfo }> {
+  const compiledEntry = path.join(repoRoot, "dist", "index.js");
+  let launch: ServerLaunchInfo;
+
+  try {
+    await access(compiledEntry);
+    launch = {
+      mode: "compiled-mcp",
+      command: process.execPath,
+      args: [compiledEntry, "mcp", "--verbose"],
+    };
+  } catch {
+    launch = {
+      mode: "source-mcp",
+      command: process.execPath,
+      args: [path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), path.join(repoRoot, "src", "index.ts"), "mcp", "--verbose"],
+    };
+  }
+
   const client = new Client(clientInfo);
   const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"), path.join(repoRoot, "src", "index.ts")],
+    command: launch.command,
+    args: launch.args,
     cwd: repoRoot,
     env: toEnvRecord(),
     stderr: "pipe",
@@ -208,5 +233,5 @@ export async function connectMcpClient(
   });
 
   await client.connect(transport);
-  return { client, transport };
+  return { client, transport, launch };
 }

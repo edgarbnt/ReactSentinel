@@ -54,12 +54,18 @@ async function main(): Promise<void> {
     const demo = await ensureDemoApp(managedProcesses);
     checks.push(`demo-app:${demo.reused ? "reused" : "started"}`);
 
-    const { client, transport: connectedTransport } = await connectMcpClient(serverLogs, {
+    const { client, transport: connectedTransport, launch } = await connectMcpClient(serverLogs, {
       name: "react-sentinel-e2e-smoke",
       version: "0.1.0",
     });
     transport = connectedTransport;
     checks.push("mcp-connect:ok");
+    checks.push(`mcp-launch:${launch.mode}`);
+    assert(serverLogs.some((line) => line.includes("MCP server started")), "Child-process MCP startup log was not captured.");
+    assert(
+      serverLogs.some((line) => line.includes("Verbose startup metadata")),
+      "Child-process MCP verbose startup metadata was not captured."
+    );
 
     const toolsResult = await client.listTools();
     const toolNames = new Set(toolsResult.tools.map((tool) => tool.name));
