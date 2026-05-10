@@ -23,7 +23,14 @@ import {
   summarizeCapabilities,
   validateCapabilities,
 } from "./capabilities.js";
-import { buildAgentPackManifest, renderAgentPackManifest, type AgentPackManifest } from "./agent-pack.js";
+import {
+  buildAgentPackManifest,
+  renderAgentPackManifest,
+  type AgentPackManifest,
+  installAgentPack,
+  uninstallAgentPack,
+  readExistingAgentPackManifest,
+} from "./agent-pack.js";
 import {
   buildMcpConfigDocument,
   buildMcpServerConfig,
@@ -34,6 +41,7 @@ import {
   validateServerConfig,
   type McpInstallMode,
   upsertServerConfig,
+  removeServerConfig,
 } from "./mcp-config.js";
 import { detectProjectCandidates } from "./project-detection.js";
 import * as browserTools from "./tools/browser.js";
@@ -58,7 +66,17 @@ if (REACT_SENTINEL_VERSION === "unknown") {
   console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
 }
 
-type CliCommand = "start" | "mcp" | "init-mcp" | "init-agent-pack" | "detect-project" | "doctor" | "help";
+type CliCommand =
+  | "start"
+  | "mcp"
+  | "init-mcp"
+  | "install-agent-pack"
+  | "update-agent-pack"
+  | "uninstall-agent-pack"
+  | "init-agent-pack"
+  | "detect-project"
+  | "doctor"
+  | "help";
 
 type StartCommandOptions = {
   replayHeadless: boolean;
@@ -94,6 +112,12 @@ type InitAgentPackCommandOptions = {
   serverName: string;
   replayHeadless: boolean;
   configPath: string | null;
+  write: boolean;
+  force: boolean;
+};
+
+type UninstallAgentPackCommandOptions = {
+  targetDirectory: string;
 };
 
 function buildServerInfoResponse(): {
@@ -396,6 +420,8 @@ function parseInitAgentPackOptions(args: string[]): {
       headed: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
       path: { type: "string" },
+      write: { type: "boolean", short: "w", default: false },
+      force: { type: "boolean", short: "f", default: false },
       version: { type: "boolean", short: "v", default: false },
     },
   });
@@ -404,26 +430,52 @@ function parseInitAgentPackOptions(args: string[]): {
     throw new Error("Choose either --headless or --headed, not both.");
   }
 
-  const mode = parsed.values.mode ?? "local";
+  const mode = (parsed.values.mode as McpInstallMode) ?? "local";
   if (mode !== "local" && mode !== "global" && mode !== "npx") {
     throw new Error(`Invalid value for --mode: "${mode}". Use "local", "global", or "npx".`);
   }
 
-  const serverName = parsed.values["server-name"] ?? REACT_SENTINEL_NAME;
+  const serverName = (parsed.values["server-name"] as string) ?? REACT_SENTINEL_NAME;
   if (!serverName.trim()) {
     throw new Error("Invalid value for --server-name: it must not be empty.");
   }
 
   return {
     options: {
-      targetDirectory: path.resolve(parsed.values.path ?? process.cwd()),
+      targetDirectory: path.resolve((parsed.values.path as string) ?? process.cwd()),
       mode,
       serverName,
       replayHeadless: parsed.values.headed ? false : true,
-      configPath: parsed.values["config-path"] ?? null,
+      configPath: (parsed.values["config-path"] as string) ?? null,
+      write: (parsed.values.write as boolean) ?? false,
+      force: (parsed.values.force as boolean) ?? false,
     },
-    help: parsed.values.help,
-    version: parsed.values.version,
+    help: (parsed.values.help as boolean),
+    version: (parsed.values.version as boolean),
+  };
+}
+
+function parseUninstallAgentPackOptions(args: string[]): {
+  options: UninstallAgentPackCommandOptions;
+  help: boolean;
+  version: boolean;
+} {
+  const parsed = parseArgs({
+    args,
+    allowPositionals: false,
+    options: {
+      help: { type: "boolean", short: "h", default: false },
+      path: { type: "string" },
+      version: { type: "boolean", short: "v", default: false },
+    },
+  });
+
+  return {
+    options: {
+      targetDirectory: path.resolve((parsed.values.path as string) ?? process.cwd()),
+    },
+    help: (parsed.values.help as boolean),
+    version: (parsed.values.version as boolean),
   };
 }
 
@@ -740,7 +792,7 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
   console.log(lines.join("\n"));
 }
 
-async function runInitAgentPack(options: InitAgentPackCommandOptions): Promise<void> {
+async function runInstallAgentPack(options: InitAgentPackCommandOptions): Promise<void> {
   const manifest: AgentPackManifest = await buildAgentPackManifest({
     targetDirectory: options.targetDirectory,
     reactSentinelVersion: REACT_SENTINEL_VERSION,
@@ -750,7 +802,67 @@ async function runInitAgentPack(options: InitAgentPackCommandOptions): Promise<v
     configPath: options.configPath,
   });
 
-  console.log(renderAgentPackManifest(manifest));
+  if (!options.write) {
+    console.log(renderAgentPackManifest(manifest));
+    console.log("\nHint: Use --write to install the pack and update the MCP config.");
+    return;
+  }
+
+  // 1. Install files
+  await installAgentPack({
+    targetDirectory: options.targetDirectory,
+    manifest,
+    force: options.force,
+  });
+  console.log(`Installed agent pack files to ${manifest.packRoot}`);
+
+  // 2. Update MCP config
+  const mcpConfigPath = manifest.mcpConfig.path;
+  let configRoot: Record<string, unknown> = {};
+
+  try {
+    configRoot = parseConfigRoot(await readFile(mcpConfigPath, "utf8"));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+      throw error;
+    }
+  }
+
+  const updatedRoot = upsertServerConfig({
+    root: configRoot,
+    serverName: options.serverName,
+    serverConfig: manifest.mcpConfig.serverConfig,
+  });
+
+  await mkdir(path.dirname(mcpConfigPath), { recursive: true });
+  await writeFile(mcpConfigPath, `${JSON.stringify(updatedRoot, null, 2)}\n`, "utf8");
+
+  console.log(`Updated MCP config at ${mcpConfigPath}`);
+  console.log("Success! React-Sentinel agent pack is ready to use.");
+}
+
+async function runUninstallAgentPack(options: UninstallAgentPackCommandOptions): Promise<void> {
+  const manifest = await readExistingAgentPackManifest(options.targetDirectory);
+  const removedFiles = await uninstallAgentPack(options.targetDirectory);
+  console.log(`Uninstalled agent pack files. Removed ${removedFiles.length} files.`);
+
+  if (manifest) {
+    const mcpConfigPath = manifest.mcpConfig.path;
+    try {
+      const configRoot = parseConfigRoot(await readFile(mcpConfigPath, "utf8"));
+      const updatedRoot = removeServerConfig({
+        root: configRoot,
+        serverName: manifest.mcpConfig.serverName,
+      });
+      await writeFile(mcpConfigPath, `${JSON.stringify(updatedRoot, null, 2)}\n`, "utf8");
+      console.log(`Removed "${manifest.mcpConfig.serverName}" from MCP config at ${mcpConfigPath}`);
+    } catch (error) {
+      // Ignore if config file missing
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        console.warn(`Warning: Could not update MCP config during uninstall: ${String(error)}`);
+      }
+    }
+  }
 }
 
 async function runCli(argv: string[]): Promise<void> {
@@ -763,6 +875,9 @@ async function runCli(argv: string[]): Promise<void> {
       candidateCommand === "start" ||
       candidateCommand === "mcp" ||
       candidateCommand === "init-mcp" ||
+      candidateCommand === "install-agent-pack" ||
+      candidateCommand === "update-agent-pack" ||
+      candidateCommand === "uninstall-agent-pack" ||
       candidateCommand === "init-agent-pack" ||
       candidateCommand === "detect-project" ||
       candidateCommand === "doctor" ||
@@ -810,7 +925,11 @@ async function runCli(argv: string[]): Promise<void> {
     return;
   }
 
-  if (command === "init-agent-pack") {
+  if (
+    command === "install-agent-pack" ||
+    command === "update-agent-pack" ||
+    (command as string) === "init-agent-pack"
+  ) {
     const parsed = parseInitAgentPackOptions(commandArgs);
     if (parsed.version) {
       console.log(REACT_SENTINEL_VERSION);
@@ -821,7 +940,27 @@ async function runCli(argv: string[]): Promise<void> {
       return;
     }
 
-    await runInitAgentPack(parsed.options);
+    if (command === "update-agent-pack") {
+      parsed.options.force = true;
+      parsed.options.write = true;
+    }
+
+    await runInstallAgentPack(parsed.options);
+    return;
+  }
+
+  if (command === "uninstall-agent-pack") {
+    const parsed = parseUninstallAgentPackOptions(commandArgs);
+    if (parsed.version) {
+      console.log(REACT_SENTINEL_VERSION);
+      return;
+    }
+    if (parsed.help) {
+      console.log(formatHelp());
+      return;
+    }
+
+    await runUninstallAgentPack(parsed.options);
     return;
   }
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMcpServerConfig, resolveDefaultConfigPath, type McpInstallMode, type McpServerConfig } from "./mcp-config.js";
@@ -217,4 +217,129 @@ export async function buildAgentPackManifest(options: {
 
 export function renderAgentPackManifest(manifest: AgentPackManifest): string {
   return JSON.stringify(manifest, null, 2);
+}
+
+export async function readExistingAgentPackManifest(targetDirectory: string): Promise<AgentPackManifest | null> {
+  const manifestPath = resolveAgentPackManifestPath(targetDirectory);
+  try {
+    const content = await readFile(manifestPath, "utf8");
+    return JSON.parse(content) as AgentPackManifest;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function installAgentPack(options: {
+  targetDirectory: string;
+  manifest: AgentPackManifest;
+  force?: boolean;
+}): Promise<void> {
+  const existingManifest = await readExistingAgentPackManifest(options.targetDirectory);
+  const packRoot = resolveAgentPackRoot(options.targetDirectory);
+
+  if (existingManifest && !options.force) {
+    throw new Error(
+      `Agent pack already installed at ${packRoot}. Use --force to overwrite.`
+    );
+  }
+
+  // Ensure directories exist
+  await mkdir(packRoot, { recursive: true });
+  const subDirs = new Set(
+    options.manifest.managedFiles
+      .map((f) => path.dirname(f.relativePath))
+      .filter((d) => d !== ".")
+  );
+  for (const dir of subDirs) {
+    await mkdir(path.join(packRoot, dir), { recursive: true });
+  }
+
+  // Write template files
+  const templates = await readAgentPackTemplates();
+  for (const template of templates) {
+    const targetPath = path.join(packRoot, template.relativePath);
+    
+    if (!options.force) {
+      try {
+        await stat(targetPath);
+        // If file exists but wasn't in the manifest, it's a conflict
+        if (!existingManifest || !existingManifest.managedFiles.find(f => f.relativePath === template.relativePath)) {
+           throw new Error(`File already exists and is not managed by a previous agent pack: ${targetPath}`);
+        }
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+          throw error;
+        }
+      }
+    }
+
+    await writeFile(targetPath, template.content, "utf8");
+  }
+
+  // Write manifest
+  await writeFile(
+    resolveAgentPackManifestPath(options.targetDirectory),
+    renderAgentPackManifest(options.manifest),
+    "utf8"
+  );
+}
+
+export async function uninstallAgentPack(targetDirectory: string): Promise<string[]> {
+  const manifest = await readExistingAgentPackManifest(targetDirectory);
+  if (!manifest) {
+    throw new Error("No agent pack installation found to uninstall.");
+  }
+
+  const removedFiles: string[] = [];
+  const packRoot = resolveAgentPackRoot(targetDirectory);
+
+  for (const managedFile of manifest.managedFiles) {
+    const filePath = path.join(packRoot, managedFile.relativePath);
+    try {
+      const currentContent = await readFile(filePath, "utf8");
+      const currentHash = computeAgentPackContentHash(currentContent);
+      
+      if (currentHash === managedFile.contentHash) {
+        await rm(filePath);
+        removedFiles.push(managedFile.relativePath);
+      } else {
+        // Skip modified files
+        console.warn(`Skipping modified file during uninstall: ${managedFile.relativePath}`);
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+        throw error;
+      }
+    }
+  }
+
+  // Remove manifest
+  await rm(resolveAgentPackManifestPath(targetDirectory));
+  removedFiles.push(AGENT_PACK_MANIFEST_FILENAME);
+
+  // Try to remove empty directories
+  const subDirs = [...new Set(
+    manifest.managedFiles
+      .map((f) => path.dirname(f.relativePath))
+      .filter((d) => d !== ".")
+  )].sort((a, b) => b.length - a.length); // Deepest first
+
+  for (const dir of subDirs) {
+    try {
+      await rmdir(path.join(packRoot, dir));
+    } catch {
+      // Ignore non-empty dirs
+    }
+  }
+
+  try {
+    await rmdir(packRoot);
+  } catch {
+    // Ignore non-empty pack root
+  }
+
+  return removedFiles;
 }
