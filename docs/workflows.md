@@ -32,7 +32,7 @@ Use this order when an agent receives a vague React bug report and needs to redu
 3. Use `get_console_events` and `get_network_events` early to separate UI rendering bugs from failed requests, noisy console errors, or missing backend data.
 4. Call `get_runtime_status` to confirm that React was detected and to see whether the runtime bridge is healthy.
 5. Use `inspect_component` or `get_react_tree` to locate the component subtree that owns the failing UI.
-6. Use `get_component_state`, `get_component_props`, `get_context_snapshot`, or `get_hook_state` to inspect the specific runtime values that explain the bug.
+6. Use `get_component_state` to inspect the runtime values behind the bug, and use `inspect_component` or `get_react_tree` again if you need more component context.
 7. Once the failure is reproducible, turn the observation into `validate_after_action` or `validate_scenario` assertions before proposing a code change.
 
 ### Why this order works
