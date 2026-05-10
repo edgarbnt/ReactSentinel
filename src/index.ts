@@ -43,12 +43,76 @@ type CliCommand = "start" | "mcp" | "doctor" | "help";
 type StartCommandOptions = {
   replayHeadless: boolean;
   cdpEndpoint: string;
+  verbose: boolean;
 };
 
 type DoctorCommandOptions = {
   cdpEndpoint: string;
   json: boolean;
 };
+
+type CapabilityStatus = "planned" | "partial" | "available";
+
+const serverCapabilities: Record<string, CapabilityStatus> = {
+  browser_ping: "available",
+  get_session_status: "available",
+  get_attach_status: "available",
+  get_attach_tabs: "available",
+  select_attach_tab: "available",
+  navigate_replay: "available",
+  get_runtime_status: "available",
+  get_component_state: "available",
+  get_async_timeline: "available",
+  get_race_condition_diagnosis: "available",
+  get_hydration_issues: "available",
+  get_render_counts: "available",
+  get_render_hotspots: "available",
+  get_hook_changes: "available",
+  get_network_events: "available",
+  get_runtime_timeline: "available",
+  runtime_inspection: "available",
+  render_monitor: "available",
+  replay_sandbox: "available",
+  replay_interactions: "available",
+  validate_scenario: "available",
+  apply_runtime_patch: "available",
+  apply_patch_then_replay: "available",
+  reset_runtime_patches: "available",
+  shadow_sandbox: "available",
+  interaction_simulation: "available",
+};
+
+function createServerInfoPayload(): {
+  name: string;
+  version: string;
+  transport: "stdio";
+  capabilities: Record<string, CapabilityStatus>;
+} {
+  return {
+    name: REACT_SENTINEL_NAME,
+    version: REACT_SENTINEL_VERSION,
+    transport: "stdio",
+    capabilities: { ...serverCapabilities },
+  };
+}
+
+function summarizeCapabilities(capabilities: Record<string, CapabilityStatus>): Record<CapabilityStatus, string[]> {
+  const summary: Record<CapabilityStatus, string[]> = {
+    planned: [],
+    partial: [],
+    available: [],
+  };
+
+  for (const [name, status] of Object.entries(capabilities)) {
+    summary[status].push(name);
+  }
+
+  for (const entries of Object.values(summary)) {
+    entries.sort((left, right) => left.localeCompare(right));
+  }
+
+  return summary;
+}
 
 function createServer(): McpServer {
   const server = new McpServer({
@@ -75,39 +139,7 @@ function createServer(): McpServer {
     {},
     async (): Promise<ToolResponse> => {
       try {
-        return ok({
-          name: REACT_SENTINEL_NAME,
-          version: REACT_SENTINEL_VERSION,
-          transport: "stdio",
-          capabilities: {
-            browser_ping: "available",
-            get_session_status: "available",
-            get_attach_status: "available",
-            get_attach_tabs: "available",
-            select_attach_tab: "available",
-            navigate_replay: "available",
-            get_runtime_status: "available",
-            get_component_state: "available",
-            get_async_timeline: "available",
-            get_race_condition_diagnosis: "available",
-            get_hydration_issues: "available",
-            get_render_counts: "available",
-            get_render_hotspots: "available",
-            get_hook_changes: "available",
-            get_network_events: "available",
-            get_runtime_timeline: "available",
-            runtime_inspection: "available",
-            render_monitor: "available",
-            replay_sandbox: "available",
-            replay_interactions: "available",
-            validate_scenario: "available",
-            apply_runtime_patch: "available",
-            apply_patch_then_replay: "available",
-            reset_runtime_patches: "available",
-            shadow_sandbox: "available",
-            interaction_simulation: "available",
-          },
-        });
+        return ok(createServerInfoPayload());
       } catch (e) {
         return err(`get_server_info failed: ${String(e)}`);
       }
@@ -148,6 +180,19 @@ export async function startServer(options?: StartCommandOptions): Promise<void> 
   console.error(
     `[react-sentinel] MCP server started (stdio transport, replay ${options?.replayHeadless === false ? "headed" : "headless"}, CDP ${browserManager.getDefaultCdpEndpoint()}) ✅`
   );
+  if (options?.verbose) {
+    const payload = createServerInfoPayload();
+    console.error(
+      `[react-sentinel] Verbose startup metadata ${JSON.stringify({
+        command: "mcp",
+        transport: payload.transport,
+        replayDefault: options.replayHeadless === false ? "headed" : "headless",
+        cdpEndpoint: browserManager.getDefaultCdpEndpoint(),
+        capabilitySummary: summarizeCapabilities(payload.capabilities),
+        capabilities: payload.capabilities,
+      })}`
+    );
+  }
 
   const shutdown = async (): Promise<void> => {
     console.error("[react-sentinel] Shutting down...");
@@ -179,6 +224,7 @@ function formatHelp(): string {
     `  --cdp-endpoint <url>  Override the default Chrome DevTools endpoint (default: ${DEFAULT_CDP_ENDPOINT}).`,
     "  --headed              Start replay sessions in visible Chromium mode by default.",
     "  --headless            Force replay sessions to stay headless (default).",
+    "  --verbose             Print agent-friendly startup metadata to stderr.",
     "  --json                Print doctor results as JSON.",
     "  -h, --help            Show help.",
     "  -v, --version         Show the CLI version.",
@@ -215,6 +261,7 @@ function parseStartOptions(args: string[]): { options: StartCommandOptions; help
       headless: { type: "boolean", default: false },
       headed: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
+      verbose: { type: "boolean", default: false },
       version: { type: "boolean", short: "v", default: false },
     },
   });
@@ -227,6 +274,7 @@ function parseStartOptions(args: string[]): { options: StartCommandOptions; help
     options: {
       replayHeadless: parsed.values.headed ? false : true,
       cdpEndpoint: parseCdpEndpoint(parsed.values["cdp-endpoint"]),
+      verbose: parsed.values.verbose,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -391,6 +439,8 @@ async function runCli(argv: string[]): Promise<void> {
 }
 
 runCli(process.argv.slice(2)).catch((e: unknown) => {
-  console.error("[react-sentinel] Fatal error:", e);
+  const message = e instanceof Error ? e.message : String(e);
+  console.error("[react-sentinel] Fatal error:", message);
+  console.error("[react-sentinel] Hint: run `react-sentinel mcp --help` for the explicit stdio command and available options.");
   process.exit(1);
 });
