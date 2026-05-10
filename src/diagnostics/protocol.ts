@@ -210,6 +210,39 @@ export interface HookChangesResponse {
   durationMs: number;
 }
 
+export type HydrationIssueKind =
+  | "mismatch"
+  | "replacement"
+  | "client_render_fallback"
+  | "hydration_failure"
+  | "warning";
+
+export type HydrationIssueFramework = "react" | "nextjs" | "unknown";
+
+export interface HydrationIssueEntry {
+  tag: "hydration";
+  kind: HydrationIssueKind;
+  framework: HydrationIssueFramework;
+  level: ConsoleEvent["type"];
+  message: string;
+  timestamp: string;
+  location?: string;
+}
+
+export interface HydrationIssuesSummary {
+  total: number;
+  byKind: Record<HydrationIssueKind, number>;
+  byLevel: Record<ConsoleEvent["type"], number>;
+  byFramework: Record<HydrationIssueFramework, number>;
+}
+
+export interface HydrationIssuesResponse {
+  url: string;
+  issues: HydrationIssueEntry[];
+  summary: HydrationIssuesSummary;
+  durationMs: number;
+}
+
 export interface ConsoleEvent {
   type: "log" | "warn" | "error" | "exception";
   text: string;

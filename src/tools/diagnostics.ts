@@ -271,6 +271,39 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_hydration_issues
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_hydration_issues",
+    [
+      "Return normalized hydration-related warnings and exceptions captured from the runtime console.",
+      "Each entry is tagged as hydration and classified to help separate SSR/client mismatch issues from other failures.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173/hydration-nextjs.html)."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of hydration issues to return. Default is 50."),
+    },
+    async ({ url, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getHydrationIssues(url, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_hydration_issues failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_console_events
   // -------------------------------------------------------------------------
   server.tool(

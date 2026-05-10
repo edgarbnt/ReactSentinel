@@ -48,6 +48,7 @@ import type {
   ComponentStateResponse,
   ConsoleEvent,
   ConsoleEventsResponse,
+  HydrationIssuesResponse,
   HookChangesResponse,
   InspectionResponseMode,
   RenderCountsResponse,
@@ -67,6 +68,7 @@ import {
   readRenderHotspotsState,
   type RenderMonitorInitArgs,
 } from "../diagnostics/render-monitor.js";
+import { readHydrationIssuesFromConsoleEvents as readHydrationIssues } from "../diagnostics/hydration.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
 
@@ -1182,6 +1184,7 @@ export class BrowserManager {
       | "get_react_tree"
       | "inspect_component"
       | "get_component_state"
+      | "get_hydration_issues"
       | "get_render_counts"
       | "get_render_hotspots"
       | "get_hook_changes"
@@ -1455,6 +1458,27 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleInspectionError(e, url, "get_hook_changes");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getHydrationIssues() — Sprint 11
+  // ---------------------------------------------------------------------------
+  async getHydrationIssues(url: string, limit: number = 50): Promise<HydrationIssuesResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const result = readHydrationIssues(this.consoleEvents, { limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        issues: result.issues,
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_hydration_issues");
     }
   }
 

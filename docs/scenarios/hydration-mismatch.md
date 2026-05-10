@@ -37,5 +37,5 @@ to a different client view and emits hydration warnings.
 ## Suggested React-Sentinel flow
 
 1. Navigate the replay browser to `http://127.0.0.1:5173/hydration-nextjs.html`.
-2. Read runtime console signals.
-3. Confirm that the mismatch is hydration-related instead of a network or component-state bug.
+2. Call `get_hydration_issues` on the same URL.
+3. Confirm that returned entries are tagged `hydration` and describe the SSR/client mismatch.

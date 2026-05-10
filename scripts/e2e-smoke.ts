@@ -25,6 +25,7 @@ const expectedTools = [
   "get_react_tree",
   "inspect_component",
   "get_component_state",
+  "get_hydration_issues",
   "get_render_counts",
   "get_render_hotspots",
   "get_hook_changes",
@@ -74,6 +75,7 @@ async function main(): Promise<void> {
     };
     assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
+    assert(serverInfo.capabilities.get_hydration_issues === "available", "get_hydration_issues capability missing.");
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
     assert(serverInfo.capabilities.get_hook_changes === "available", "get_hook_changes capability missing.");
@@ -433,19 +435,31 @@ async function main(): Promise<void> {
     );
     await new Promise((resolve) => setTimeout(resolve, 600));
 
-    const hydrationConsoleEvents = expectToolSuccess(
-      await callTool(client, "get_console_events", { url: hydrationDemoUrl }),
-      "get_console_events(hydration)"
-    ) as { events: { type: string; text: string }[] };
+    const hydrationIssues = expectToolSuccess(
+      await callTool(client, "get_hydration_issues", { url: hydrationDemoUrl, limit: 20 }),
+      "get_hydration_issues"
+    ) as {
+      issues: { tag: string; kind: string; framework: string; message: string }[];
+      summary: { total: number };
+    };
     assert(
-      hydrationConsoleEvents.events.some(
-        (event) =>
-          (event.type === "error" || event.type === "exception") &&
-          /hydration|server html|did not match/i.test(event.text)
-      ),
-      "Hydration mismatch demo did not emit a detectable hydration warning or exception."
+      hydrationIssues.summary.total >= 1,
+      "get_hydration_issues returned no hydration issue for the mismatch demo."
     );
-    checks.push("hydration-mismatch:ok");
+    assert(
+      hydrationIssues.issues.every((issue) => issue.tag === "hydration"),
+      "get_hydration_issues returned an issue without the hydration tag."
+    );
+    assert(
+      hydrationIssues.issues.some(
+        (issue) =>
+          issue.framework === "react" &&
+          /hydration|server html|did not match/i.test(issue.message) &&
+          ["mismatch", "replacement", "hydration_failure", "client_render_fallback", "warning"].includes(issue.kind)
+      ),
+      "get_hydration_issues did not classify the mismatch demo as a hydration issue."
+    );
+    checks.push("get_hydration_issues:ok");
 
     console.log(
       JSON.stringify(
