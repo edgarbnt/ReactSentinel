@@ -43,11 +43,14 @@ import type {
   ValidationScenarioResponse,
 } from "./protocol.js";
 import type {
+  AsyncTimelineResponse,
+  RaceConditionDiagnosisResponse,
   RuntimeStatus,
   ComponentInspectionResponse,
   ComponentStateResponse,
   ConsoleEvent,
   ConsoleEventsResponse,
+  HydrationIssuesResponse,
   HookChangesResponse,
   InspectionResponseMode,
   RenderCountsResponse,
@@ -60,6 +63,8 @@ import type {
 } from "../diagnostics/protocol.js";
 import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
+import { readAsyncTimelineFromNetworkEvents } from "../diagnostics/async-timeline.js";
+import { diagnoseRaceCondition } from "../diagnostics/race-condition.js";
 import {
   buildRenderMonitorSource,
   readHookChangesState,
@@ -67,6 +72,7 @@ import {
   readRenderHotspotsState,
   type RenderMonitorInitArgs,
 } from "../diagnostics/render-monitor.js";
+import { readHydrationIssuesFromConsoleEvents as readHydrationIssues } from "../diagnostics/hydration.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
 
@@ -1182,6 +1188,9 @@ export class BrowserManager {
       | "get_react_tree"
       | "inspect_component"
       | "get_component_state"
+      | "get_async_timeline"
+      | "get_race_condition_diagnosis"
+      | "get_hydration_issues"
       | "get_render_counts"
       | "get_render_hotspots"
       | "get_hook_changes"
@@ -1459,6 +1468,27 @@ export class BrowserManager {
   }
 
   // ---------------------------------------------------------------------------
+  // getHydrationIssues() — Sprint 11
+  // ---------------------------------------------------------------------------
+  async getHydrationIssues(url: string, limit: number = 50): Promise<HydrationIssuesResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const result = readHydrationIssues(this.consoleEvents, { limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        issues: result.issues,
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_hydration_issues");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // getConsoleEvents() — SCRUM-8
   // ---------------------------------------------------------------------------
   async getConsoleEvents(url: string): Promise<ConsoleEventsResponse | { error: string }> {
@@ -1650,6 +1680,59 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleError(e, url);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getAsyncTimeline() — Sprint 11
+  // ---------------------------------------------------------------------------
+  async getAsyncTimeline(url: string, limit: number = 50): Promise<AsyncTimelineResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const networkEvents = await this.readNetworkEvents(page);
+      const result = readAsyncTimelineFromNetworkEvents(networkEvents, { limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        events: result.events,
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_async_timeline");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRaceConditionDiagnosis() — Sprint 11
+  // ---------------------------------------------------------------------------
+  async getRaceConditionDiagnosis(
+    url: string,
+    stateSelector: string,
+    limit: number = 50
+  ): Promise<RaceConditionDiagnosisResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const networkEvents = await this.readNetworkEvents(page);
+      const timeline = readAsyncTimelineFromNetworkEvents(networkEvents, { limit });
+      const finalStateText = await page.evaluate((selector) => {
+        return document.querySelector(selector)?.textContent?.trim() ?? null;
+      }, stateSelector);
+      const diagnosis = diagnoseRaceCondition(timeline.events, timeline.summary.invertedGroups, finalStateText);
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        stateSelector,
+        finalStateText,
+        ...diagnosis,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_race_condition_diagnosis");
     }
   }
 

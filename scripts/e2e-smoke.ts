@@ -25,6 +25,9 @@ const expectedTools = [
   "get_react_tree",
   "inspect_component",
   "get_component_state",
+  "get_async_timeline",
+  "get_race_condition_diagnosis",
+  "get_hydration_issues",
   "get_render_counts",
   "get_render_hotspots",
   "get_hook_changes",
@@ -45,6 +48,7 @@ async function main(): Promise<void> {
   const checks: string[] = [];
   let transport: StdioClientTransport | null = null;
   const serverLogs: string[] = [];
+  const hydrationDemoUrl = new URL("/hydration-nextjs.html", demoUrl).toString();
 
   try {
     const demo = await ensureDemoApp(managedProcesses);
@@ -73,6 +77,12 @@ async function main(): Promise<void> {
     };
     assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
+    assert(serverInfo.capabilities.get_async_timeline === "available", "get_async_timeline capability missing.");
+    assert(
+      serverInfo.capabilities.get_race_condition_diagnosis === "available",
+      "get_race_condition_diagnosis capability missing."
+    );
+    assert(serverInfo.capabilities.get_hydration_issues === "available", "get_hydration_issues capability missing.");
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
     assert(serverInfo.capabilities.get_hook_changes === "available", "get_hook_changes capability missing.");
@@ -313,6 +323,84 @@ async function main(): Promise<void> {
     assert((runtimeTimeline.summary.bySource.network ?? 0) >= 1, "get_runtime_timeline did not include network events.");
     checks.push("get_runtime_timeline:ok");
 
+    const asyncTraceReplay = expectToolSuccess(
+      await callTool(client, "replay_interactions", {
+        url: demoUrl,
+        resetSession: true,
+        steps: [
+          { action: "click", selector: "#async-trace-run-button" },
+          { action: "wait", durationMs: 900 },
+        ],
+      }),
+      "replay_interactions(async-trace)"
+    ) as { success: boolean };
+    assert(asyncTraceReplay.success === true, "async trace replay failed.");
+
+    const asyncTimeline = expectToolSuccess(
+      await callTool(client, "get_async_timeline", { url: demoUrl, limit: 10 }),
+      "get_async_timeline"
+    ) as {
+      events: { phase: string; groupKey: string }[];
+      summary: { totalRequests: number; invertedGroups: { groupKey: string }[]; slowRequests: { durationMs: number }[] };
+    };
+    assert(asyncTimeline.summary.totalRequests >= 2, "get_async_timeline reported fewer than two requests.");
+    assert(
+      asyncTimeline.events.some((event) => event.phase === "request_start") &&
+        asyncTimeline.events.some((event) => event.phase === "request_resolve"),
+      "get_async_timeline did not include both start and resolve phases."
+    );
+    assert(
+      asyncTimeline.summary.invertedGroups.some((group) => group.groupKey.includes("/api/mock/async-trace")),
+      "get_async_timeline did not detect the inverted completion order for concurrent requests."
+    );
+    assert(
+      asyncTimeline.summary.slowRequests.some((request) => request.durationMs >= 700),
+      "get_async_timeline did not surface the slow request in its summary."
+    );
+    checks.push("get_async_timeline:ok");
+
+    const raceConditionReplay = expectToolSuccess(
+      await callTool(client, "replay_interactions", {
+        url: demoUrl,
+        resetSession: true,
+        steps: [
+          { action: "click", selector: "#race-condition-run-button" },
+          { action: "wait", durationMs: 900 },
+        ],
+      }),
+      "replay_interactions(race-condition)"
+    ) as { success: boolean };
+    assert(raceConditionReplay.success === true, "race condition replay failed.");
+
+    const raceDiagnosis = expectToolSuccess(
+      await callTool(client, "get_race_condition_diagnosis", {
+        url: demoUrl,
+        stateSelector: "#race-condition-visible-result",
+        limit: 10,
+      }),
+      "get_race_condition_diagnosis"
+    ) as {
+      suspected: boolean;
+      diagnosis: string;
+      finalStateText: string | null;
+      latestIntent: { query: string | null } | null;
+      finalStateRequest: { query: string | null } | null;
+    };
+    assert(raceDiagnosis.suspected === true, "get_race_condition_diagnosis did not flag the stale overwrite.");
+    assert(
+      raceDiagnosis.finalStateText?.toLowerCase().includes("slow") === true,
+      "Race condition final state did not expose the stale slow result."
+    );
+    assert(
+      raceDiagnosis.latestIntent?.query === "fast" && raceDiagnosis.finalStateRequest?.query === "slow",
+      "Race condition diagnosis did not relate the latest intent to the overwritten final state."
+    );
+    assert(
+      /overwrote newer state|latest intent/i.test(raceDiagnosis.diagnosis),
+      "Race condition diagnosis was not readable enough."
+    );
+    checks.push("get_race_condition_diagnosis:ok");
+
     const validateScenario = expectToolSuccess(
       await callTool(client, "validate_scenario", {
         url: demoUrl,
@@ -422,6 +510,41 @@ async function main(): Promise<void> {
     assert(patchedReplay.verdict === "patch_validated", "apply_patch_then_replay did not return patch_validated.");
     assert(patchedReplay.cleanup?.strategy === "reset_session", "apply_patch_then_replay cleanup strategy mismatch.");
     checks.push("apply_patch_then_replay:ok");
+
+    expectToolSuccess(
+      await callTool(client, "navigate_replay", {
+        url: hydrationDemoUrl,
+        resetSession: true,
+      }),
+      "navigate_replay(hydration)"
+    );
+    await new Promise((resolve) => setTimeout(resolve, 600));
+
+    const hydrationIssues = expectToolSuccess(
+      await callTool(client, "get_hydration_issues", { url: hydrationDemoUrl, limit: 20 }),
+      "get_hydration_issues"
+    ) as {
+      issues: { tag: string; kind: string; framework: string; message: string }[];
+      summary: { total: number };
+    };
+    assert(
+      hydrationIssues.summary.total >= 1,
+      "get_hydration_issues returned no hydration issue for the mismatch demo."
+    );
+    assert(
+      hydrationIssues.issues.every((issue) => issue.tag === "hydration"),
+      "get_hydration_issues returned an issue without the hydration tag."
+    );
+    assert(
+      hydrationIssues.issues.some(
+        (issue) =>
+          issue.framework === "react" &&
+          /hydration|server html|did not match/i.test(issue.message) &&
+          ["mismatch", "replacement", "hydration_failure", "client_render_fallback", "warning"].includes(issue.kind)
+      ),
+      "get_hydration_issues did not classify the mismatch demo as a hydration issue."
+    );
+    checks.push("get_hydration_issues:ok");
 
     console.log(
       JSON.stringify(

@@ -45,6 +45,26 @@ function mockApiPlugin() {
       return;
     }
 
+    if (pathname === "/api/mock/async-trace") {
+      const query = (url?.searchParams.get("query") ?? "unknown").trim() || "unknown";
+      const requestedDelay = Number(url?.searchParams.get("delay") ?? "0");
+      const delayMs = Number.isFinite(requestedDelay) ? Math.max(0, Math.min(requestedDelay, 2_000)) : 0;
+
+      setTimeout(() => {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(
+          JSON.stringify({
+            scenario: "async-trace",
+            query,
+            delayMs,
+            message: `Async trace response for ${query}`,
+          })
+        );
+      }, delayMs);
+      return;
+    }
+
     next();
   };
 

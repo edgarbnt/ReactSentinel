@@ -5,6 +5,13 @@ Sample React applications demonstrating React-Sentinel's capabilities.
 Each example is a self-contained app designed to trigger a specific class of bug
 that React-Sentinel can detect and help fix.
 
+## Available fixtures
+
+| Directory or URL | Bug demonstrated |
+|---|---|
+| `test-app` | Multi-scenario React demo app used by the smoke runner |
+| `test-app/hydration-nextjs.html` | Next.js-style server/client hydration divergence |
+
 ## Planned examples
 
 | Directory | Bug demonstrated |

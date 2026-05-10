@@ -210,6 +210,39 @@ export interface HookChangesResponse {
   durationMs: number;
 }
 
+export type HydrationIssueKind =
+  | "mismatch"
+  | "replacement"
+  | "client_render_fallback"
+  | "hydration_failure"
+  | "warning";
+
+export type HydrationIssueFramework = "react" | "nextjs" | "unknown";
+
+export interface HydrationIssueEntry {
+  tag: "hydration";
+  kind: HydrationIssueKind;
+  framework: HydrationIssueFramework;
+  level: ConsoleEvent["type"];
+  message: string;
+  timestamp: string;
+  location?: string;
+}
+
+export interface HydrationIssuesSummary {
+  total: number;
+  byKind: Record<HydrationIssueKind, number>;
+  byLevel: Record<ConsoleEvent["type"], number>;
+  byFramework: Record<HydrationIssueFramework, number>;
+}
+
+export interface HydrationIssuesResponse {
+  url: string;
+  issues: HydrationIssueEntry[];
+  summary: HydrationIssuesSummary;
+  durationMs: number;
+}
+
 export interface ConsoleEvent {
   type: "log" | "warn" | "error" | "exception";
   text: string;
@@ -251,5 +284,82 @@ export interface RuntimeTimelineResponse {
   url: string;
   events: RuntimeTimelineEvent[];
   summary: RuntimeTimelineSummary;
+  durationMs: number;
+}
+
+export type AsyncTimelinePhase = "request_start" | "request_resolve" | "request_reject";
+
+export interface AsyncTimelineRequestRef {
+  transport: "fetch" | "xhr";
+  method: string;
+  url: string;
+  status: number | null;
+  durationMs: number;
+  error: string | null;
+}
+
+export interface AsyncTimelineEvent {
+  requestId: string;
+  groupKey: string;
+  label: string;
+  phase: AsyncTimelinePhase;
+  timestamp: string;
+  sequence: number;
+  request: AsyncTimelineRequestRef;
+}
+
+export interface AsyncTimelineInvertedGroup {
+  groupKey: string;
+  requestIds: string[];
+  startedOrder: string[];
+  settledOrder: string[];
+}
+
+export interface AsyncTimelineRequestSummary {
+  requestId: string;
+  label: string;
+  groupKey: string;
+  durationMs: number;
+  status: number | null;
+}
+
+export interface AsyncTimelineSummary {
+  totalEvents: number;
+  totalRequests: number;
+  groups: number;
+  invertedGroups: AsyncTimelineInvertedGroup[];
+  slowRequests: AsyncTimelineRequestSummary[];
+}
+
+export interface AsyncTimelineResponse {
+  url: string;
+  events: AsyncTimelineEvent[];
+  summary: AsyncTimelineSummary;
+  durationMs: number;
+}
+
+export interface RaceConditionDiagnosisRequest {
+  requestId: string;
+  label: string;
+  query: string | null;
+  url: string;
+  status: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface RaceConditionDiagnosisResult {
+  suspected: boolean;
+  diagnosis: string;
+  evidence: string[];
+  latestIntent: RaceConditionDiagnosisRequest | null;
+  finalStateRequest: RaceConditionDiagnosisRequest | null;
+  invertedGroup: AsyncTimelineInvertedGroup | null;
+}
+
+export interface RaceConditionDiagnosisResponse extends RaceConditionDiagnosisResult {
+  url: string;
+  stateSelector: string;
+  finalStateText: string | null;
   durationMs: number;
 }
