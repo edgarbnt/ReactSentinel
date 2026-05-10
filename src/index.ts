@@ -29,6 +29,7 @@ import {
   type McpInstallMode,
   upsertServerConfig,
 } from "./mcp-config.js";
+import { detectProjectCandidates } from "./project-detection.js";
 import * as browserTools from "./tools/browser.js";
 import * as diagnosticsTools from "./tools/diagnostics.js";
 import * as networkTools from "./tools/network.js";
@@ -51,7 +52,7 @@ if (REACT_SENTINEL_VERSION === "unknown") {
   console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
 }
 
-type CliCommand = "start" | "mcp" | "init-mcp" | "doctor" | "help";
+type CliCommand = "start" | "mcp" | "init-mcp" | "detect-project" | "doctor" | "help";
 
 type StartCommandOptions = {
   replayHeadless: boolean;
@@ -73,6 +74,11 @@ type InitMcpCommandOptions = {
   replayHeadless: boolean;
   write: boolean;
   configPath: string | null;
+};
+
+type DetectProjectCommandOptions = {
+  path: string;
+  json: boolean;
 };
 
 type CapabilityStatus = "planned" | "partial" | "available";
@@ -236,6 +242,7 @@ function formatHelp(): string {
     "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel init-mcp [--client <claude-code|claude-desktop>] [--mode <local|global|npx>]",
+    "  react-sentinel detect-project [--path <dir>] [--json]",
     "  react-sentinel doctor [--cdp-endpoint <url>] [--json]",
     "  react-sentinel help",
     "",
@@ -243,6 +250,7 @@ function formatHelp(): string {
     "  start   Start the MCP server over stdio (default command).",
     "  mcp     Explicit stdio MCP server command for agent/client configs.",
     "  init-mcp  Print a ready-to-paste MCP config snippet for Claude-compatible clients.",
+    "  detect-project  Detect likely React, Next.js, or Vite application roots from package.json files.",
     "  doctor  Check the local replay browser runtime and optional CDP attach endpoint.",
     "  help    Show this help message.",
     "",
@@ -252,6 +260,7 @@ function formatHelp(): string {
     "  --headless            Force replay sessions to stay headless (default).",
     "  --verbose             Print agent-friendly startup metadata to stderr.",
     "  --json                Print doctor results as JSON.",
+    "  --path <dir>          Base directory scanned by detect-project (defaults to the current directory).",
     "  --config-path <path>  Validate an existing MCP config file during doctor or init-mcp --write.",
     "  --client <name>       Target MCP client for init-mcp (claude-code or claude-desktop).",
     "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
@@ -264,6 +273,7 @@ function formatHelp(): string {
     "Examples:",
     "  npx react-sentinel mcp --headed",
     "  npx react-sentinel doctor --json",
+    "  react-sentinel detect-project --path . --json",
     "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
     "  react-sentinel init-mcp --client claude-desktop --mode local",
   ].join("\n");
@@ -359,6 +369,28 @@ function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; 
       replayHeadless: parsed.values.headed ? false : true,
       write: parsed.values.write,
       configPath: parsed.values["config-path"] ?? null,
+    },
+    help: parsed.values.help,
+    version: parsed.values.version,
+  };
+}
+
+function parseDetectProjectOptions(args: string[]): { options: DetectProjectCommandOptions; help: boolean; version: boolean } {
+  const parsed = parseArgs({
+    args,
+    allowPositionals: false,
+    options: {
+      help: { type: "boolean", short: "h", default: false },
+      json: { type: "boolean", default: false },
+      path: { type: "string" },
+      version: { type: "boolean", short: "v", default: false },
+    },
+  });
+
+  return {
+    options: {
+      path: path.resolve(parsed.values.path ?? process.cwd()),
+      json: parsed.values.json,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -596,6 +628,44 @@ async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
   console.log(nextStep);
 }
 
+async function runDetectProject(options: DetectProjectCommandOptions): Promise<void> {
+  const candidates = await detectProjectCandidates(options.path);
+  const selected = candidates[0] ?? null;
+
+  if (options.json) {
+    console.log(
+      JSON.stringify(
+        {
+          basePath: options.path,
+          selected,
+          candidates,
+        },
+        null,
+        2
+      )
+    );
+    return;
+  }
+
+  if (!selected) {
+    console.log(`No React, Next.js, or Vite project was detected under ${options.path}.`);
+    return;
+  }
+
+  const lines = [
+    `Detected project root: ${selected.root}`,
+    `Framework: ${selected.framework}`,
+    `Package: ${selected.packageName ?? "(unnamed package)"}`,
+    `Evidence: ${selected.evidence.join(", ")}`,
+  ];
+
+  if (candidates.length > 1) {
+    lines.push(`Other candidates: ${candidates.slice(1).map((candidate) => candidate.root).join(", ")}`);
+  }
+
+  console.log(lines.join("\n"));
+}
+
 async function runCli(argv: string[]): Promise<void> {
   const [candidateCommand, ...rest] = argv;
   let command: CliCommand = "start";
@@ -606,6 +676,7 @@ async function runCli(argv: string[]): Promise<void> {
       candidateCommand === "start" ||
       candidateCommand === "mcp" ||
       candidateCommand === "init-mcp" ||
+      candidateCommand === "detect-project" ||
       candidateCommand === "doctor" ||
       candidateCommand === "help"
     ) {
@@ -648,6 +719,21 @@ async function runCli(argv: string[]): Promise<void> {
     }
 
     await runInitMcp(parsed.options);
+    return;
+  }
+
+  if (command === "detect-project") {
+    const parsed = parseDetectProjectOptions(commandArgs);
+    if (parsed.version) {
+      console.log(REACT_SENTINEL_VERSION);
+      return;
+    }
+    if (parsed.help) {
+      console.log(formatHelp());
+      return;
+    }
+
+    await runDetectProject(parsed.options);
     return;
   }
 
