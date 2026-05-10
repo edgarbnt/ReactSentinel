@@ -445,7 +445,7 @@ function parseInitAgentPackOptions(args: string[]): {
       targetDirectory: path.resolve((parsed.values.path as string) ?? process.cwd()),
       mode,
       serverName,
-      replayHeadless: parsed.values.headed ? false : true,
+      replayHeadless: parsed.values.headed ? false : parsed.values.headless ? true : true,
       configPath: (parsed.values["config-path"] as string) ?? null,
       write: (parsed.values.write as boolean) ?? false,
       force: (parsed.values.force as boolean) ?? false,
