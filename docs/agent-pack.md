@@ -20,6 +20,8 @@ The bundle is designed around three principles:
 2. **Claude Code first** — installation writes the MCP server entry to the project-local `.mcp.json` file by default.
 3. **Portable guidance** — commands, skills, heuristics, and compatibility notes live as plain Markdown files so they stay readable outside one specific client.
 
+The repository keeps the reusable pack assets under `assets/agent-pack/`. Install and update flows copy those assets into the project-local managed bundle.
+
 ## Managed file layout
 
 | Path | Purpose |
