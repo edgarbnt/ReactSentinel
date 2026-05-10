@@ -8,6 +8,8 @@
  * Transport: stdio (compatible with all MCP clients out of the box).
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -18,9 +20,13 @@ import type { ToolResponse } from "./types.js";
 import { browserManager, DEFAULT_CDP_ENDPOINT } from "./browser/index.js";
 import {
   buildMcpConfigDocument,
+  buildMcpServerConfig,
+  parseConfigRoot,
   renderMcpConfigDocument,
+  resolveDefaultConfigPath,
   type McpClient,
   type McpInstallMode,
+  upsertServerConfig,
 } from "./mcp-config.js";
 import * as browserTools from "./tools/browser.js";
 import * as diagnosticsTools from "./tools/diagnostics.js";
@@ -62,6 +68,8 @@ type InitMcpCommandOptions = {
   mode: McpInstallMode;
   serverName: string;
   replayHeadless: boolean;
+  write: boolean;
+  configPath: string | null;
 };
 
 type CapabilityStatus = "planned" | "partial" | "available";
@@ -244,6 +252,8 @@ function formatHelp(): string {
     "  --client <name>       Target MCP client for init-mcp (claude-code or claude-desktop).",
     "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
     "  --server-name <name>  Server key used inside the generated mcpServers object.",
+    "  --write               Write or merge the generated config into a config file.",
+    "  --config-path <path>  Override the config file path used with init-mcp --write.",
     "  -h, --help            Show help.",
     "  -v, --version         Show the CLI version.",
     "",
@@ -306,11 +316,13 @@ function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; 
     allowPositionals: false,
     options: {
       client: { type: "string" },
+      "config-path": { type: "string" },
       mode: { type: "string" },
       "server-name": { type: "string" },
       headless: { type: "boolean", default: false },
       headed: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
+      write: { type: "boolean", default: false },
       version: { type: "boolean", short: "v", default: false },
     },
   });
@@ -340,6 +352,8 @@ function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; 
       mode,
       serverName,
       replayHeadless: parsed.values.headed ? false : true,
+      write: parsed.values.write,
+      configPath: parsed.values["config-path"] ?? null,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -451,6 +465,51 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
   }
 }
 
+async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
+  const document = buildMcpConfigDocument({
+    client: options.client,
+    mode: options.mode,
+    serverName: options.serverName,
+    replayHeadless: options.replayHeadless,
+  });
+
+  if (!options.write) {
+    console.log(renderMcpConfigDocument(document));
+    return;
+  }
+
+  const targetPath = options.configPath ?? resolveDefaultConfigPath({ client: options.client });
+  let configRoot: Record<string, unknown> = {};
+
+  try {
+    configRoot = parseConfigRoot(await readFile(targetPath, "utf8"));
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const updatedRoot = upsertServerConfig({
+    root: configRoot,
+    serverName: options.serverName,
+    serverConfig: buildMcpServerConfig({
+      mode: options.mode,
+      replayHeadless: options.replayHeadless,
+    }),
+  });
+
+  await mkdir(path.dirname(targetPath), { recursive: true });
+  await writeFile(targetPath, `${JSON.stringify(updatedRoot, null, 2)}\n`, "utf8");
+
+  const nextStep =
+    options.client === "claude-desktop"
+      ? "Restart Claude Desktop after saving the config."
+      : "Restart Claude Code or reopen the project so the new MCP config is loaded.";
+
+  console.log(`Wrote MCP config for "${options.serverName}" to ${targetPath}.`);
+  console.log(nextStep);
+}
+
 async function runCli(argv: string[]): Promise<void> {
   const [candidateCommand, ...rest] = argv;
   let command: CliCommand = "start";
@@ -502,16 +561,7 @@ async function runCli(argv: string[]): Promise<void> {
       return;
     }
 
-    console.log(
-      renderMcpConfigDocument(
-        buildMcpConfigDocument({
-          client: parsed.options.client,
-          mode: parsed.options.mode,
-          serverName: parsed.options.serverName,
-          replayHeadless: parsed.options.replayHeadless,
-        })
-      )
-    );
+    await runInitMcp(parsed.options);
     return;
   }
 
