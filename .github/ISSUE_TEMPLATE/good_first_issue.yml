@@ -1,0 +1,36 @@
+name: Good First Issue
+description: A clearly scoped task suitable for new contributors.
+labels: ["good first issue", "help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose a task that a new contributor could pick up with minimal context.
+        Keep the scope as small and self-contained as possible.
+  - type: textarea
+    id: task
+    attributes:
+      label: Task description
+      description: What exactly needs to be done? Be precise — include file paths, function names, or test commands when applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters
+      description: Brief rationale — what does completing this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: hints
+    attributes:
+      label: Hints and starting points
+      description: Pointers to relevant files, docs, or functions. Include the commands needed to validate the change.
+    validations:
+      required: true
+  - type: input
+    id: estimate
+    attributes:
+      label: Effort estimate
+      description: Rough estimate (e.g., "1–2 hours", "half a day").
+      placeholder: "1–2 hours"

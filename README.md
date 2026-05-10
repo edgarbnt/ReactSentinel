@@ -1,5 +1,9 @@
 # React-Sentinel
 
+<p align="center">
+  <img src="assets/social-preview.svg" alt="React-Sentinel — Runtime debugger for AI agents" width="800"/>
+</p>
+
 > Give AI agents a runtime debugger for React apps: inspect live state, reproduce bugs, and validate fixes before editing code.
 
 React-Sentinel is an MCP server for AI coding agents and IDE assistants. Instead of guessing from source code alone, the agent can connect to a live browser session, inspect React runtime data, replay user flows, and turn observations into assertions.
@@ -95,6 +99,8 @@ React-Sentinel keeps the CLI binary name `react-sentinel`, but the public npm pa
 - [docs/integration-guides.md](docs/integration-guides.md) — Claude, Cursor, Copilot, Gemini, and generic MCP setup guides
 - [docs/agent-runtime-ux.md](docs/agent-runtime-ux.md) — trigger heuristics, mode choice, and example agent prompts
 - [docs/adoption-checklist.md](docs/adoption-checklist.md) — onboarding checklist and validation scenarios
+- [docs/local-ports.md](docs/local-ports.md) — legitimate local URLs, ports, and CDP endpoints used in docs and tests
+- [docs/public-readiness-audit.md](docs/public-readiness-audit.md) — Sprint 15 audit of public-repo cleanup decisions
 - [docs/workflows.md](docs/workflows.md) — deep workflow reference for Attach, Replay, Sandbox, and MCP wiring
 - [docs/local-diagnostics-checklist.md](docs/local-diagnostics-checklist.md) — troubleshooting
 
