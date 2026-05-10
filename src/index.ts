@@ -294,7 +294,10 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
         : `WARN attach endpoint ${report.checks.attachEndpoint.error}`,
     ];
 
-    if (report.checks.attachEndpoint.status !== "pass") {
+    if (
+      report.checks.attachEndpoint.status !== "pass" &&
+      !report.checks.attachEndpoint.error.includes(report.checks.attachEndpoint.help)
+    ) {
       lines.push(`Hint: ${report.checks.attachEndpoint.help}`);
     }
 
