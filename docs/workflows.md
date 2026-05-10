@@ -42,6 +42,23 @@ Use this order when an agent receives a vague React bug report and needs to redu
 - Tree inspection narrows the search to the component that actually owns the broken state.
 - Structured validation gives the agent a reproducible proof point before and after a fix.
 
+## Mode selection matrix
+
+Use this matrix when an agent must choose between **Attach**, **Replay**, and **Shadow Sandbox**.
+
+| Mode | Real user state | Isolation | Safety | Reproducibility | Best when |
+|---|---|---|---|---|---|
+| **Attach** | Reuses the current live tab, cookies, and local storage | Low | Lowest, because actions hit the real tab | Medium | The bug depends on authenticated state, browser extensions, or a page that cannot be rebuilt easily |
+| **Replay** | Starts from a clean browser session | High | High | High | The agent needs a deterministic reproduction, scenario assertions, or a clean debugging baseline |
+| **Shadow Sandbox** | Builds on top of replay only | High | High, because repository files stay untouched | High for script-on-page hypotheses | The agent wants to test a runtime-only fix before editing source files |
+
+### Selection rules
+
+1. Prefer **Replay** by default.
+2. Escalate to **Attach** only when the failure depends on real user state that replay cannot reconstruct cheaply.
+3. Use **Shadow Sandbox** only after a replay scenario already demonstrates the bug.
+4. Treat `shadow_sandbox = partial` as a reminder that the sandbox is narrower than full code rewriting: it validates runtime hypotheses, not permanent source edits.
+
 ## 1. Attach workflow
 
 Use **Attach** when the important state already lives in your real browser session: authenticated cookies, local storage, browser extensions, or a page you do not want to rebuild from scratch.
