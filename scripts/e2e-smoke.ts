@@ -102,6 +102,18 @@ async function main(): Promise<void> {
       serverInfo.capabilitiesByMode.sandbox?.available?.includes("apply_patch_then_replay"),
       "sandbox capability map is missing apply_patch_then_replay."
     );
+    assert(
+      serverInfo.capabilitiesByMode.attach?.available?.includes("select_attach_tab"),
+      "attach capability map is missing select_attach_tab."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.replay?.available?.includes("browser_ping"),
+      "replay capability map is missing browser_ping."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.sandbox?.partial?.includes("shadow_sandbox"),
+      "sandbox capability map should expose partial shadow_sandbox."
+    );
     checks.push("get_server_info:ok");
 
     const echo = expectToolSuccess(await callTool(client, "echo", { message: "react-sentinel-e2e" }), "echo") as {
