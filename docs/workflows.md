@@ -23,6 +23,25 @@ Use `get_server_info` when an agent needs to understand what React-Sentinel can 
 2. whether that capability belongs to attach, replay, or sandbox mode,
 3. and whether the capability is fully available or only partial.
 
+## Agent-first React debug flow
+
+Use this order when an agent receives a vague React bug report and needs to reduce guesswork quickly.
+
+1. Call `get_server_info` and `get_session_status` first to confirm which capabilities and modes are usable in the current session.
+2. Choose **Attach** only if the bug depends on a real user session; otherwise start in **Replay** for safer, reproducible investigation.
+3. Use `get_console_events` and `get_network_events` early to separate UI rendering bugs from failed requests, noisy console errors, or missing backend data.
+4. Call `get_runtime_status` to confirm that React was detected and to see whether the runtime bridge is healthy.
+5. Use `inspect_component` or `get_react_tree` to locate the component subtree that owns the failing UI.
+6. Use `get_component_state`, `get_component_props`, `get_context_snapshot`, or `get_hook_state` to inspect the specific runtime values that explain the bug.
+7. Once the failure is reproducible, turn the observation into `validate_after_action` or `validate_scenario` assertions before proposing a code change.
+
+### Why this order works
+
+- Status and mode checks prevent an agent from choosing tools that are unavailable in the current session.
+- Console and network signals often explain React symptoms faster than starting with DOM selectors alone.
+- Tree inspection narrows the search to the component that actually owns the broken state.
+- Structured validation gives the agent a reproducible proof point before and after a fix.
+
 ## 1. Attach workflow
 
 Use **Attach** when the important state already lives in your real browser session: authenticated cookies, local storage, browser extensions, or a page you do not want to rebuild from scratch.
