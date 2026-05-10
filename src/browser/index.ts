@@ -974,7 +974,6 @@ export class BrowserManager {
   private static buildAttachUnavailableMessage(endpoint: string, reason: string): string {
     return [
       `Chrome CDP is unavailable at ${endpoint}: ${reason}.`,
-      BrowserManager.buildAttachHelpMessage(),
       "You can keep using replay mode with browser_ping or navigate_replay while live Chrome attach is unavailable.",
     ].join(" ");
   }
