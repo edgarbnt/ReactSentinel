@@ -260,7 +260,10 @@ export async function installAgentPack(options: {
   }
 
   // Write template files
-  const templates = await readAgentPackTemplates();
+  type AgentPackTemplates = Awaited<ReturnType<typeof readAgentPackTemplates>>;
+  const templates =
+    (options as { templates?: AgentPackTemplates }).templates ??
+    await readAgentPackTemplates();
   for (const template of templates) {
     const targetPath = path.join(packRoot, template.relativePath);
     
