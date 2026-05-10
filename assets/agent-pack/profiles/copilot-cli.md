@@ -13,3 +13,5 @@ Use the **generic MCP profile** as the baseline and keep the pack guidance close
 - mapping the pack routines to Copilot chat prompts or custom instructions;
 - deciding where to surface the skill text in the client workflow;
 - any client-specific packaging beyond standard MCP wiring.
+
+For VS Code workspaces, a project-local `.vscode/mcp.json` file is a reasonable place to carry the same stdio launch command.

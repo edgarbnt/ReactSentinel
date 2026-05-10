@@ -10,6 +10,8 @@ This profile describes the portable stdio setup for any MCP client that can laun
 - args: launch React-Sentinel with `mcp` and a replay visibility flag
 - env: normal local shell environment, plus any client-specific overrides
 
+When the client fetches React-Sentinel from npm, the public package name is `@edgarbrunet/react-sentinel`.
+
 ## Limits
 
 - config file path and JSON shape may differ by client;

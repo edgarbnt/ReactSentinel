@@ -158,11 +158,13 @@ Use the **Sandbox / hot patch** flow when you want to test a runtime-only fix hy
 
 The zero-config path is now centered on `init-mcp`: generate or write a client snippet that points to the explicit `mcp` stdio command.
 
+See [universal-install.md](universal-install.md) for the public npm package contract and [integration-guides.md](integration-guides.md) for environment-specific wiring.
+
 ### Generate the client snippet
 
 ```bash
 npm run build
-node dist/index.js init-mcp --client claude-desktop --mode local
+node dist/index.js init-mcp --client auto --mode local
 ```
 
 ### Write the config automatically
@@ -178,7 +180,7 @@ node dist/index.js init-mcp --client claude-code --mode npx --write
 |---|---|---|
 | **local** | You are inside this checkout or another local package install | `node /absolute/path/to/dist/index.js mcp --headless` |
 | **global** | `react-sentinel` is installed globally | `react-sentinel mcp --headless` |
-| **npx** | You want the MCP client to fetch React-Sentinel on demand | `npx -y react-sentinel mcp --headless` |
+| **npx** | You want the MCP client to fetch React-Sentinel on demand | `npx -y @edgarbrunet/react-sentinel mcp --headless` |
 
 ### Verify an existing config
 
@@ -190,6 +192,7 @@ node dist/index.js doctor --config-path ~/.config/Claude/claude_desktop_config.j
 
 - Claude Desktop keeps the classic `mcpServers` JSON shape and needs a restart after config changes.
 - Claude Code can use the same snippet format in a project-local `.mcp.json` file; override the file path with `--config-path` if you want a different location.
+- Cursor uses `.cursor/mcp.json`, GitHub Copilot / VS Code uses `.vscode/mcp.json`, and Gemini CLI uses `.gemini/settings.json`.
 - For source-based development you can still point a client at `src/index.ts` through `tsx`, but the default workflow now prefers the compiled CLI entrypoint and the dedicated `mcp` command.
 
 ### Scope note

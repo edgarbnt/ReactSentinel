@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { buildMcpServerConfig, resolveDefaultConfigPath, type McpInstallMode, type McpServerConfig } from "./mcp-config.js";
 
 export type AgentPackFileKind = "readme" | "command" | "skill" | "doc" | "profile";
-export type AgentPackProfileId = "claude-code" | "generic-mcp" | "gemini-cli" | "copilot-cli";
+export type AgentPackProfileId = "claude-code" | "generic-mcp" | "cursor" | "gemini-cli" | "copilot-cli";
 
 export type AgentPackTemplateDefinition = {
   relativePath: string;
@@ -60,6 +60,11 @@ const supportedProfiles: AgentPackManifest["profiles"] = [
     id: "generic-mcp",
     support: "supported",
     summary: "Portable stdio MCP profile with client-specific config path differences.",
+  },
+  {
+    id: "cursor",
+    support: "documented",
+    summary: "Project-local Cursor adaptation that reuses stdio MCP wiring.",
   },
   {
     id: "gemini-cli",
@@ -120,6 +125,11 @@ const templateDefinitions: AgentPackTemplateDefinition[] = [
   {
     relativePath: "profiles/generic-mcp.md",
     description: "Portable MCP stdio integration profile.",
+    kind: "profile",
+  },
+  {
+    relativePath: "profiles/cursor.md",
+    description: "Cursor adaptation notes.",
     kind: "profile",
   },
   {

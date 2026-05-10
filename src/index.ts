@@ -8,7 +8,7 @@
  * Transport: stdio (compatible with all MCP clients out of the box).
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { createRequire } from "node:module";
@@ -34,9 +34,13 @@ import {
   buildMcpConfigDocument,
   buildMcpServerConfig,
   parseConfigRoot,
+  REACT_SENTINEL_BINARY_NAME,
+  REACT_SENTINEL_PUBLIC_PACKAGE_NAME,
   renderMcpConfigDocument,
   resolveDefaultConfigPath,
   type McpClient,
+  type McpConfigRootKey,
+  type McpServerConfig,
   validateServerConfig,
   type McpInstallMode,
   upsertServerConfig,
@@ -56,6 +60,7 @@ const semverPattern =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export const REACT_SENTINEL_NAME = "react-sentinel";
+const DEFAULT_PUBLIC_CLIENT = "claude-code";
 export const REACT_SENTINEL_VERSION =
   typeof packageVersion === "string" && semverPattern.test(packageVersion)
     ? packageVersion
@@ -91,12 +96,23 @@ type DoctorCommandOptions = {
 };
 
 type InitMcpCommandOptions = {
-  client: McpClient;
+  client: McpClient | "auto";
   mode: McpInstallMode;
   serverName: string;
   replayHeadless: boolean;
   write: boolean;
   configPath: string | null;
+};
+
+type InitMcpClientDefinition = {
+  id: McpClient;
+  label: string;
+  rootKey: McpConfigRootKey;
+  supportsWrite: boolean;
+  includeTransportType: boolean;
+  detectPaths: (cwd: string) => string[];
+  nextStep: string;
+  limitation: string;
 };
 
 type DetectProjectCommandOptions = {
@@ -118,6 +134,109 @@ type InitAgentPackCommandOptions = {
 type UninstallAgentPackCommandOptions = {
   targetDirectory: string;
 };
+
+const initMcpClients: Record<McpClient, InitMcpClientDefinition> = {
+  "claude-code": {
+    id: "claude-code",
+    label: "Claude Code",
+    rootKey: "mcpServers",
+    supportsWrite: true,
+    includeTransportType: false,
+    detectPaths: (cwd) => [resolveDefaultConfigPath({ client: "claude-code", cwd })],
+    nextStep: "Restart Claude Code or reopen the project so the new MCP config is loaded.",
+    limitation: "Project-local setup only; React-Sentinel does not manage global Claude Code config automatically.",
+  },
+  "claude-desktop": {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    rootKey: "mcpServers",
+    supportsWrite: true,
+    includeTransportType: false,
+    detectPaths: (cwd) => [resolveDefaultConfigPath({ client: "claude-desktop", cwd })],
+    nextStep: "Restart Claude Desktop after saving the config.",
+    limitation: "Desktop integration only covers the MCP server entry; prompts and routines stay in the repository docs.",
+  },
+  cursor: {
+    id: "cursor",
+    label: "Cursor",
+    rootKey: "mcpServers",
+    supportsWrite: true,
+    includeTransportType: false,
+    detectPaths: (cwd) => [resolveDefaultConfigPath({ client: "cursor", cwd })],
+    nextStep: "Restart Cursor or reload the window so the MCP server is picked up.",
+    limitation: "Only the MCP transport is auto-written; any Cursor-specific prompt workflow remains manual.",
+  },
+  "gemini-cli": {
+    id: "gemini-cli",
+    label: "Gemini CLI",
+    rootKey: "mcpServers",
+    supportsWrite: true,
+    includeTransportType: false,
+    detectPaths: (cwd) => [resolveDefaultConfigPath({ client: "gemini-cli", cwd })],
+    nextStep: "Restart Gemini CLI in this project so it reloads .gemini/settings.json.",
+    limitation: "Gemini-specific command aliases and prompt memory remain manual.",
+  },
+  "github-copilot": {
+    id: "github-copilot",
+    label: "GitHub Copilot / VS Code",
+    rootKey: "servers",
+    supportsWrite: true,
+    includeTransportType: true,
+    detectPaths: (cwd) => [resolveDefaultConfigPath({ client: "github-copilot", cwd })],
+    nextStep: "Reload VS Code or reopen the workspace so Copilot can discover the MCP server.",
+    limitation: "The generated file targets VS Code/Copilot workspace config; other Copilot surfaces may require manual adaptation.",
+  },
+  "generic-mcp": {
+    id: "generic-mcp",
+    label: "Generic MCP client",
+    rootKey: "mcpServers",
+    supportsWrite: false,
+    includeTransportType: false,
+    detectPaths: () => [],
+    nextStep: "Paste the JSON snippet into your MCP client's config file and restart that client.",
+    limitation: "No default config path is assumed because generic MCP clients do not share one standard location.",
+  },
+};
+
+function formatInitMcpClientList(): string {
+  return ["auto", ...Object.keys(initMcpClients)].join("|");
+}
+
+function getInitMcpClientDefinition(client: McpClient): InitMcpClientDefinition {
+  return initMcpClients[client];
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function detectInitMcpClient(cwd: string): Promise<McpClient> {
+  const detectionOrder: McpClient[] = ["cursor", "github-copilot", "gemini-cli", "claude-code", "claude-desktop"];
+
+  for (const client of detectionOrder) {
+    const definition = getInitMcpClientDefinition(client);
+    for (const candidatePath of definition.detectPaths(cwd)) {
+      if (await pathExists(candidatePath)) {
+        return client;
+      }
+    }
+  }
+
+  return DEFAULT_PUBLIC_CLIENT;
+}
+
+function buildLaunchCommandPreview(serverConfig: McpServerConfig): string {
+  return [serverConfig.command, ...serverConfig.args].join(" ");
+}
+
+function inferConfigRootKey(targetPath: string): McpConfigRootKey {
+  return targetPath.endsWith(path.join(".vscode", "mcp.json")) ? "servers" : "mcpServers";
+}
 
 function buildServerInfoResponse(): {
   name: string;
@@ -230,10 +349,12 @@ function formatHelp(): string {
   return [
     "React-Sentinel CLI",
     "",
+    `Public npm package: ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME}`,
+    "",
     "Usage:",
     "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
-    "  react-sentinel init-mcp [--client <claude-code|claude-desktop>] [--mode <local|global|npx>]",
+    `  react-sentinel init-mcp [--client <${formatInitMcpClientList()}>] [--mode <local|global|npx>]`,
     "  react-sentinel init-agent-pack [--path <dir>] [--mode <local|global|npx>]",
     "  react-sentinel install-agent-pack [--path <dir>] [--mode <local|global|npx>]",
     "  react-sentinel update-agent-pack [--path <dir>] [--mode <local|global|npx>]",
@@ -245,7 +366,7 @@ function formatHelp(): string {
     "Commands:",
     "  start   Start the MCP server over stdio (default command).",
     "  mcp     Explicit stdio MCP server command for agent/client configs.",
-    "  init-mcp  Print a ready-to-paste MCP config snippet for Claude-compatible clients.",
+    "  init-mcp  Print or write a ready-to-paste MCP config snippet for common agent and IDE targets.",
     "  init-agent-pack  Print the Claude Code-first agent-pack manifest prototype.",
     "  install-agent-pack  Install agent-pack files and write the MCP config entry.",
     "  update-agent-pack  Re-install agent-pack files, overwriting managed files and the MCP config entry.",
@@ -263,7 +384,7 @@ function formatHelp(): string {
     "  --path <dir>          Base directory scanned by detect-project (defaults to the current directory).",
     "  --target-url <url>    Manual URL fallback used when detect-project should trust a caller-provided target.",
     "  --config-path <path>  Validate an existing MCP config file during doctor, or override the config file path used with init-mcp --write.",
-    "  --client <name>       Target MCP client for init-mcp (claude-code or claude-desktop).",
+    `  --client <name>       Target MCP client for init-mcp (${formatInitMcpClientList()}).`,
     "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
     "  --server-name <name>  Server key used inside the generated mcpServers object.",
     "  --write               Write or merge the generated config into a config file.",
@@ -272,11 +393,13 @@ function formatHelp(): string {
     "  -v, --version         Show the CLI version.",
     "",
     "Examples:",
-    "  npx react-sentinel mcp --headed",
-    "  npx react-sentinel doctor --json",
+    `  npx -y ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME} mcp --headed`,
+    `  npx -y ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME} doctor --json`,
     "  react-sentinel detect-project --path . --target-url http://127.0.0.1:3000 --json",
     "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
+    "  react-sentinel init-mcp --client auto --mode npx",
     "  react-sentinel init-mcp --client claude-desktop --mode local",
+    "  react-sentinel init-mcp --client github-copilot --mode npx --write",
     "  react-sentinel init-agent-pack --path . --mode npx",
     "  react-sentinel install-agent-pack --path . --mode local",
     "  react-sentinel update-agent-pack --path . --mode npx",
@@ -351,9 +474,9 @@ function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; 
     throw new Error("Choose either --headless or --headed, not both.");
   }
 
-  const client = parsed.values.client ?? "claude-desktop";
-  if (client !== "claude-code" && client !== "claude-desktop") {
-    throw new Error(`Invalid value for --client: "${client}". Use "claude-code" or "claude-desktop".`);
+  const client = parsed.values.client ?? "auto";
+  if (client !== "auto" && !(client in initMcpClients)) {
+    throw new Error(`Invalid value for --client: "${client}". Use one of ${formatInitMcpClientList()}.`);
   }
 
   const mode = parsed.values.mode ?? "local";
@@ -366,12 +489,12 @@ function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; 
     throw new Error("Invalid value for --server-name: it must not be empty.");
   }
 
-  return {
-    options: {
-      client,
-      mode,
-      serverName,
-      replayHeadless: parsed.values.headed ? false : true,
+    return {
+      options: {
+        client: client as InitMcpCommandOptions["client"],
+        mode,
+        serverName,
+        replayHeadless: parsed.values.headed ? false : true,
       write: parsed.values.write,
       configPath: parsed.values["config-path"] ?? null,
     },
@@ -563,9 +686,10 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
       };
 
   if (options.configPath) {
+    const rootKey = inferConfigRootKey(options.configPath);
     try {
-      const root = parseConfigRoot(await readFile(options.configPath, "utf8"));
-      const validation = validateServerConfig(root, options.serverName);
+      const root = parseConfigRoot(await readFile(options.configPath, "utf8"), rootKey);
+      const validation = validateServerConfig(root, options.serverName, rootKey);
       configCheck =
         validation.status === "pass"
           ? {
@@ -687,8 +811,10 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
 }
 
 async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
+  const resolvedClient = options.client === "auto" ? await detectInitMcpClient(process.cwd()) : options.client;
+  const clientDefinition = getInitMcpClientDefinition(resolvedClient);
   const document = buildMcpConfigDocument({
-    client: options.client,
+    rootKey: clientDefinition.rootKey,
     mode: options.mode,
     serverName: options.serverName,
     replayHeadless: options.replayHeadless,
@@ -699,11 +825,18 @@ async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
     return;
   }
 
-  const targetPath = options.configPath ?? resolveDefaultConfigPath({ client: options.client });
+  if (!clientDefinition.supportsWrite) {
+    throw new Error(
+      `The "${clientDefinition.label}" target does not have a safe default config path. Re-run without --write and paste the snippet manually.`
+    );
+  }
+
+  const targetPath = options.configPath ?? resolveDefaultConfigPath({ client: resolvedClient });
+  const rootKey = inferConfigRootKey(targetPath);
   let configRoot: Record<string, unknown> = {};
 
   try {
-    configRoot = parseConfigRoot(await readFile(targetPath, "utf8"));
+    configRoot = parseConfigRoot(await readFile(targetPath, "utf8"), rootKey);
   } catch (error) {
     if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
       throw error;
@@ -712,23 +845,29 @@ async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
 
   const updatedRoot = upsertServerConfig({
     root: configRoot,
+    rootKey,
     serverName: options.serverName,
     serverConfig: buildMcpServerConfig({
       mode: options.mode,
       replayHeadless: options.replayHeadless,
+      includeTransportType: clientDefinition.includeTransportType,
     }),
   });
 
   await mkdir(path.dirname(targetPath), { recursive: true });
   await writeFile(targetPath, `${JSON.stringify(updatedRoot, null, 2)}\n`, "utf8");
 
-  const nextStep =
-    options.client === "claude-desktop"
-      ? "Restart Claude Desktop after saving the config."
-      : "Restart Claude Code or reopen the project so the new MCP config is loaded.";
-
   console.log(`Wrote MCP config for "${options.serverName}" to ${targetPath}.`);
-  console.log(nextStep);
+  console.log(`Target: ${clientDefinition.label}`);
+  console.log(
+    `Launch command: ${buildLaunchCommandPreview(buildMcpServerConfig({
+      mode: options.mode,
+      replayHeadless: options.replayHeadless,
+      includeTransportType: clientDefinition.includeTransportType,
+    }))}`
+  );
+  console.log(`Limit: ${clientDefinition.limitation}`);
+  console.log(clientDefinition.nextStep);
 }
 
 async function runDetectProject(options: DetectProjectCommandOptions): Promise<void> {

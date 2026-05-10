@@ -1,5 +1,5 @@
 {
-  "name": "react-sentinel",
+  "name": "@edgarbrunet/react-sentinel",
   "version": "0.1.0",
   "description": "Autonomous debugging infrastructure for AI agents — MCP server bridging AI terminals to browser runtime",
   "type": "module",
