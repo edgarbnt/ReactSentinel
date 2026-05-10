@@ -21,6 +21,15 @@ React-Sentinel bridges AI terminals (Claude, Copilot CLI…) to a live browser r
 - **MCP SDK:** `@modelcontextprotocol/sdk`
 - **Browser automation:** Playwright
 
+## Product workflows
+
+See [docs/workflows.md](docs/workflows.md) for the main MVP workflows:
+
+- live Chrome attach,
+- isolated replay reproduction,
+- replay-only sandbox hot patching,
+- and the minimal local MCP integration.
+
 ## Prerequisites
 
 - **Node.js ≥ 20** — check with `node --version`
