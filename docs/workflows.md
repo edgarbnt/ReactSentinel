@@ -178,3 +178,23 @@ node dist/index.js doctor --config-path ~/.config/Claude/claude_desktop_config.j
 ### Scope note
 
 This document covers the **manual local MVP plus zero-config client wiring**. Higher-level agent automation still depends on the caller choosing the right attach/replay workflow for the debugging task.
+
+## Agent prompt examples
+
+Use prompts like these when you want an agent to drive React-Sentinel directly instead of improvising its own order of operations.
+
+### UI bug
+
+> Reproduce the checkout button bug in replay mode, inspect the React tree around the disabled button, and tell me which prop or state value keeps it disabled.
+
+### Network error
+
+> Run the failing profile flow in replay mode, capture console and network events, and identify whether the visible error starts from a failed request or from client-side rendering.
+
+### Render loop
+
+> Attach to my live tab, confirm React is detected, inspect the component that keeps re-rendering, and check hook or context values that change every render.
+
+### Sandbox patch
+
+> Reproduce the bug in replay mode, turn it into a validation scenario, then try a sandbox patch that guards the failing runtime path and report whether the patch validates the scenario.
