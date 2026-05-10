@@ -603,7 +603,7 @@ export class BrowserManager {
   private pushConsoleEvent(event: ConsoleEvent): void {
     this.consoleEvents.push(event);
     if (this.consoleEvents.length > BrowserManager.consoleEventsLimit) {
-      this.consoleEvents.splice(0, this.consoleEvents.length - BrowserManager.consoleEventsLimit);
+      this.consoleEvents.shift();
     }
   }
 

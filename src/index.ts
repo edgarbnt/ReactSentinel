@@ -24,12 +24,19 @@ import * as patchTools from "./tools/patch.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version?: string };
+const packageVersion = packageJson.version;
+const semverPattern =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export const REACT_SENTINEL_NAME = "react-sentinel";
 export const REACT_SENTINEL_VERSION =
-  typeof packageJson.version === "string" && packageJson.version.length > 0
-    ? packageJson.version
-    : "0.1.0";
+  typeof packageVersion === "string" && semverPattern.test(packageVersion)
+    ? packageVersion
+    : "unknown";
+
+if (REACT_SENTINEL_VERSION === "unknown") {
+  console.warn("[react-sentinel] Warning: package.json version is missing or invalid; using \"unknown\".");
+}
 
 type CliCommand = "start" | "doctor" | "help";
 
