@@ -80,9 +80,9 @@ npm info @edgarbrunet/react-sentinel
 npx -y @edgarbrunet/react-sentinel --version
 ```
 
-### Recommended `package.json` `files` allowlist
+### Current `package.json` `files` allowlist
 
-Before publishing, add a `files` field to `package.json` to limit what is uploaded:
+React-Sentinel now uses this `files` field in `package.json` to limit what is uploaded:
 
 ```json
 "files": [
@@ -93,7 +93,7 @@ Before publishing, add a `files` field to `package.json` to limit what is upload
 ]
 ```
 
-This keeps internal docs, sprint reports, and `.agents/` out of the npm package.
+Verify that the allowlist still matches the release intent before every publish. It keeps internal docs, sprint reports, and project-history files out of the npm package.
 
 ---
 

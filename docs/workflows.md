@@ -158,7 +158,7 @@ Use the **Sandbox / hot patch** flow when you want to test a runtime-only fix hy
 
 The zero-config path is now centered on `init-mcp`: generate or write a client snippet that points to the explicit `mcp` stdio command.
 
-See [universal-install.md](universal-install.md) for the public npm package contract and [integration-guides.md](integration-guides.md) for environment-specific wiring.
+See [universal-install.md](universal-install.md) for the public npm package contract, [integration-guides.md](integration-guides.md) for environment-specific wiring, and [local-ports.md](local-ports.md) for the repo's documented local URLs and CDP endpoints.
 
 ### Generate the client snippet
 

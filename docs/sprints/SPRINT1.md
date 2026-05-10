@@ -52,7 +52,7 @@
 |---|---|
 | `README.md` | Prérequis, lancement local étape par étape, config Claude Desktop |
 | `docs/sprints/SPRINT1.md` | Ce fichier — inventaire du sprint |
-| `BLUEPRINT.md` | Vision technique long terme du projet |
+| `docs/project-history/BLUEPRINT.fr.md` | Vision technique long terme du projet |
 
 ---
 

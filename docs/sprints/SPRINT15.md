@@ -1,81 +1,67 @@
-# Sprint 15 Report — Public Repo Readiness & GitHub Visibility
+# Sprint 15 Report — Universal Agent Adoption & Public Repo Readiness
 
 ## Objective
 
-Sprint 15 aimed to prepare React-Sentinel for public distribution. This includes auditing the repository for public safety, producing universal install documentation, adding GitHub community health files, establishing a CI pipeline, creating GitHub visibility assets, and documenting the manual release gate that keeps the npm publish step under Edgar's exclusive control.
+The objective of Sprint 15 was to turn React-Sentinel into a clearer public product: define a safe public npm package contract, support more agent and IDE environments, rewrite the documentation around user onboarding, and prepare the repository for a public launch without automating sensitive release actions.
 
 ## Key Accomplishments
 
-### SCRUM-327 — Universal install documentation
-- Created `docs/universal-install.md` with npx, local-checkout, and Docker install flows.
-- Covered all supported AI clients (Claude Code, Claude Desktop, Cursor, GitHub Copilot, Gemini CLI, generic MCP).
-
-### SCRUM-325 / SCRUM-326 / SCRUM-323 / SCRUM-324 — Product guides
-- Added `docs/integration-guides.md` with per-environment setup steps.
-- Added `docs/agent-runtime-ux.md` with runtime workflow examples.
-- Added `docs/adoption-checklist.md` with validation scenarios and operator checklist.
-- Added `docs/workflows.md` with prompt examples and agent decision trees.
-
-### SCRUM-348 — Public repo readiness audit
-- Produced `docs/public-readiness-audit.md` documenting what stays, what moves, and what needs human decision.
-- Moved `BLUEPRINT.md` and `.agents/rules/coding-style.md` to project history per the audit recommendations.
-- Added `docs/local-ports.md` to centralize port and URL references.
-- Updated `README.md` to reference the canonical npm package name `@edgarbrunet/react-sentinel`.
-- Confirmed zero real secrets via `git grep` scan.
-
-### SCRUM-355 — GitHub visibility assets
-- **Community standard files**: Added `CONTRIBUTING.md`, `SECURITY.md`, and `CODE_OF_CONDUCT.md` at the repository root.
-- **GitHub issue templates** under `.github/ISSUE_TEMPLATE/`:
-  - `bug_report.yml` — structured fields for version, Node.js, AI client, steps to reproduce.
-  - `feature_request.yml` — problem/solution/alternatives/audience.
-  - `good_first_issue.yml` — scoped task template for new contributors.
-- **PR template**: Added `.github/PULL_REQUEST_TEMPLATE.md` with a validation checklist.
-- **CI workflow**: Added `.github/workflows/ci.yml` running `npm run check`, `npm run build`, and `cd examples/test-app && npm run build` on Node.js 20 and 22, triggered on pushes to `main` and `sprint/**` and on PRs to `main`.
-- **Social preview asset**: Added `assets/social-preview.svg` (1280 × 640, dark-themed) and wired it into `README.md`.
-- **Visibility plan doc**: Added `docs/github-visibility-plan.md` with suggested repo description, topics, labels, draft public issues (including a `good first issue` candidate), and badge snippets.
-
-### SCRUM-422 — Manual release gate
-- Added `docs/release-gate.md` with a comprehensive pre-publish checklist, npm dry-run command, files allowlist recommendation, post-publish GitHub steps, and a rollback plan.
-- Clearly documents which actions CI/agents may perform vs. which remain exclusively manual for Edgar.
+- **Universal install contract**:
+    - Switched the public npm package name to `@edgarbrunet/react-sentinel`.
+    - Kept the CLI binary name `react-sentinel`.
+    - Updated `init-mcp` to support `auto`, `claude-code`, `claude-desktop`, `cursor`, `github-copilot`, `gemini-cli`, and `generic-mcp`.
+    - Added client-aware write targets for `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, and `.gemini/settings.json`.
+- **Product documentation refresh**:
+    - Rewrote `README.md` into a product-facing entrypoint with a quick start and supported-environment table.
+    - Added dedicated docs for universal install, integration guides, runtime UX, adoption validation, local ports, public-readiness audit, GitHub visibility planning, and the manual release gate.
+    - Extended the agent-pack docs and assets with a Cursor profile and updated portability notes for Copilot and Gemini.
+- **Adoption validation**:
+    - Validated `init-mcp` flows for Claude Code, Cursor, GitHub Copilot / VS Code, Gemini CLI, generic MCP, and auto-detection in temporary workspaces.
+    - Converted the onboarding findings into a reusable adoption checklist and explicit limitations.
+- **Public repo cleanup**:
+    - Produced a public-readiness audit before cleanup.
+    - Moved the French root blueprint and internal agent rule file into `docs/project-history/`.
+    - Centralized legitimate local URLs, ports, and CDP endpoints in `docs/local-ports.md`.
+- **GitHub visibility assets**:
+    - Added `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue templates, a PR template, a declarative labels file, and a baseline CI workflow.
+    - Added a social-preview placeholder SVG and linked it from the README.
+    - Drafted a GitHub visibility plan with repo description, topics, labels, badges, and seeded public issue ideas.
+- **Manual release safety**:
+    - Added `docs/release-gate.md` listing every action that must remain manual for Edgar.
+    - Added an npm `files` allowlist and an MIT `LICENSE` file to keep package publication scoped and predictable.
 
 ## Technical Choices
 
-- **YAML issue templates over Markdown**: GitHub's form-based YAML templates provide structured field validation, making bug reports more actionable.
-- **Matrix CI (Node 20 + 22)**: Ensures forward-compatibility without adding significant CI cost.
-- **SVG for social preview placeholder**: SVG is source-controlled and diff-friendly; the release gate docs explain the PNG conversion step required for the GitHub social preview upload.
-- **Separate visibility plan vs. release gate**: Keeps discoverability config (topics, labels, draft issues) separate from the irreversible publish checklist, making each document independently actionable.
+- **Scoped package, stable binary**: the public npm package uses the scope `@edgarbrunet/react-sentinel`, while the command-line binary stays `react-sentinel`. This avoids collisions with the unscoped npm package while keeping CLI ergonomics familiar.
+- **Client-specific MCP config roots**: `init-mcp` now differentiates between `mcpServers`-based configs and the VS Code/Copilot `servers` root. This keeps each target honest instead of pretending one JSON shape works everywhere.
+- **History preserved, not deleted**: internal French notes were moved into `docs/project-history/` instead of being destroyed. The repository stays cleaner at the root while preserving useful project context.
+- **Publish surface explicitly bounded**: the `files` allowlist limits what goes into the npm tarball to `dist/`, `assets/agent-pack/`, `README.md`, and `LICENSE`. This avoids leaking sprint reports, project-history notes, or internal automation files into the package.
+- **Manual-only release steps**: sensitive actions such as npm publish, GitHub visibility changes, topics, social preview, and public issue creation remain manual by design. The repository now prepares these steps instead of automating them unsafely.
 
 ## Validation
 
-```
-npm run check      → ✅ Type-check passed (tsc --noEmit, zero errors)
-npm run build      → ✅ Compiled src/ → dist/
-cd examples/test-app && npm run build → ✅ Vite build, 41 modules, 155 kB JS output
-```
-
-No TypeScript changes were made; all new files are Markdown, YAML, SVG, and one GitHub Actions workflow.
+- **Type-check**: `npm run check`
+- **Build**: `npm run build`
+- **Demo app build**: `cd examples/test-app && npm run build`
+- **Smoke test**: `npm run e2e:smoke`
+    - confirmed MCP connection, replay navigation, runtime inspection, validation tools, patch workflow, and hydration diagnostics.
+- **Multi-client onboarding**:
+    - verified `init-mcp --write` for Claude Code, Cursor, GitHub Copilot / VS Code, and Gemini CLI in temporary workspaces;
+    - verified generic MCP snippet generation uses `@edgarbrunet/react-sentinel`;
+    - verified `doctor --config-path` accepts the Copilot / VS Code config shape.
+- **Package dry-run**: `npm pack --dry-run`
+    - confirmed that `LICENSE`, `README.md`, `assets/agent-pack/`, and `dist/` are included;
+    - confirmed that internal docs and historical files are excluded from the npm package.
+- **MCP stdio cleanliness**:
+    - confirmed `node dist/index.js mcp --headless` writes **0 bytes to stdout** during startup and uses stderr for human-readable startup logs.
 
 ## Jira Tickets Completed
 
-- **[SCRUM-327]**: [S15] Universal install documentation
-- **[SCRUM-325]**: [S15] Integration guides
-- **[SCRUM-326]**: [S15] Agent runtime UX docs
-- **[SCRUM-323]**: [S15] Adoption checklist
-- **[SCRUM-324]**: [S15] Workflows documentation
-- **[SCRUM-348]**: [S15] Public repo readiness audit
-- **[SCRUM-355]**: [S15] GitHub visibility assets (community files, CI, issue templates, social preview, visibility plan)
-- **[SCRUM-422]**: [S15] Manual release gate documentation
-
-## Manual steps remaining (not automatable)
-
-See `docs/release-gate.md` for the full checklist. In summary:
-
-| Action | Owner |
-|---|---|
-| Make repository public on GitHub | Edgar |
-| Apply topics, description, website URL | Edgar |
-| Upload social preview PNG | Edgar |
-| Create draft issues on GitHub | Edgar |
-| `npm publish --access public` | Edgar |
-| Create GitHub Release | Edgar |
-| Update README badges after first CI run | Edgar |
+- **[SCRUM-327]**: [S15-01][Universal Install] Créer l’installation universelle avec `@edgarbrunet/react-sentinel`
+- **[SCRUM-325]**: [S15-02][Integration Guides] Documenter chaque environnement agent et IDE
+- **[SCRUM-326]**: [S15-03][Agent Runtime UX] Définir comment les agents utilisent React-Sentinel au bon moment
+- **[SCRUM-323]**: [S15-04][README Product] Refaire le README en mode produit installable
+- **[SCRUM-324]**: [S15-05][Adoption Validation] Tester l’onboarding complet sur plusieurs environnements
+- **[SCRUM-348]**: [S15-06][Public Repo Readiness] Nettoyer le repo public avec règles d’automatisation Copilot CLI
+- **[SCRUM-355]**: [S15-07][GitHub Visibility] Optimiser visibilité avec `@edgarbrunet/react-sentinel`
+- **[SCRUM-422]**: [S15-08][Manual Release Gate] Actions sensibles à valider uniquement par Edgar
