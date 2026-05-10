@@ -143,6 +143,30 @@ export function upsertServerConfig(options: {
   };
 }
 
+export function removeServerConfig(options: {
+  root: JsonObject;
+  serverName: string;
+}): JsonObject {
+  const existingServers = options.root.mcpServers;
+  if (
+    existingServers !== undefined &&
+    (typeof existingServers !== "object" || existingServers === null || Array.isArray(existingServers))
+  ) {
+    throw new Error("The mcpServers property must be a JSON object.");
+  }
+
+  if (!existingServers) {
+    return options.root;
+  }
+
+  const { [options.serverName]: _, ...remainingServers } = existingServers as Record<string, unknown>;
+
+  return {
+    ...options.root,
+    mcpServers: remainingServers,
+  };
+}
+
 export function validateServerConfig(root: JsonObject, serverName: string): McpConfigValidation {
   const issues: string[] = [];
   const rawServers = root.mcpServers;
