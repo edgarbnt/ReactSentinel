@@ -489,12 +489,12 @@ function parseInitMcpOptions(args: string[]): { options: InitMcpCommandOptions; 
     throw new Error("Invalid value for --server-name: it must not be empty.");
   }
 
-    return {
-      options: {
-        client: client as InitMcpCommandOptions["client"],
-        mode,
-        serverName,
-        replayHeadless: parsed.values.headed ? false : true,
+  return {
+    options: {
+      client: client as InitMcpCommandOptions["client"],
+      mode,
+      serverName,
+      replayHeadless: parsed.values.headed ? false : true,
       write: parsed.values.write,
       configPath: parsed.values["config-path"] ?? null,
     },
@@ -813,8 +813,11 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
 async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
   const resolvedClient = options.client === "auto" ? await detectInitMcpClient(process.cwd()) : options.client;
   const clientDefinition = getInitMcpClientDefinition(resolvedClient);
+  const snippetRootKey = options.write
+    ? inferConfigRootKey(options.configPath ?? resolveDefaultConfigPath({ client: resolvedClient }))
+    : clientDefinition.rootKey;
   const document = buildMcpConfigDocument({
-    rootKey: clientDefinition.rootKey,
+    rootKey: snippetRootKey,
     mode: options.mode,
     serverName: options.serverName,
     replayHeadless: options.replayHeadless,
