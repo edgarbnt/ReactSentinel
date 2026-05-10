@@ -13,6 +13,7 @@ This guide explains how to wire React-Sentinel into each supported agent or IDE 
 | Gemini CLI | Supported | `npx` | Project-local `.gemini/settings.json` |
 | Copilot CLI | Partial / manual | `npx` | Reuse the same stdio launch command; CLI-specific setup may be interactive |
 | Generic MCP client | Supported manually | `npx` or `local` | Paste the snippet into the client-specific config |
+| Other IDE integrations | Planned / manual | `npx` or `local` | Start from the generic MCP snippet and adapt the IDE-specific path |
 
 ## Claude Code
 
@@ -150,3 +151,5 @@ For IDEs that do not expose a first-class React-Sentinel target yet:
 1. start from the **generic MCP** snippet;
 2. keep the launch command on stdio transport;
 3. document the IDE-specific config path next to the project if you plan to share it with a team.
+
+If an IDE has no stable MCP config path yet, treat it as a manual integration instead of pretending React-Sentinel can auto-wire it safely.
