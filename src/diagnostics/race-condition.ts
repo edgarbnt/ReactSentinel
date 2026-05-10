@@ -62,6 +62,11 @@ function readMatchingRequest(
   return null;
 }
 
+function readSettledOrderIndex(requestIds: string[], requestId: string): number | null {
+  const index = requestIds.lastIndexOf(requestId);
+  return index >= 0 ? index : null;
+}
+
 export function diagnoseRaceCondition(
   events: AsyncTimelineEvent[],
   invertedGroups: AsyncTimelineInvertedGroup[],
@@ -85,11 +90,19 @@ export function diagnoseRaceCondition(
     readMatchingRequest(requests, latestGroup.requestIds, finalStateText) ??
     requests.get(latestGroup.settledOrder[latestGroup.settledOrder.length - 1] ?? "") ??
     null;
-
-  const suspected =
+  const latestIntentSettledIndex =
+    latestIntent !== null ? readSettledOrderIndex(latestGroup.settledOrder, latestIntent.requestId) : null;
+  const finalStateSettledIndex =
+    finalStateRequest !== null ? readSettledOrderIndex(latestGroup.settledOrder, finalStateRequest.requestId) : null;
+  const confirmsOverwriteOrder =
     latestIntent !== null &&
     finalStateRequest !== null &&
-    latestIntent.requestId !== finalStateRequest.requestId;
+    latestIntent.requestId !== finalStateRequest.requestId &&
+    latestIntentSettledIndex !== null &&
+    finalStateSettledIndex !== null &&
+    latestIntentSettledIndex < finalStateSettledIndex;
+
+  const suspected = confirmsOverwriteOrder;
 
   if (!suspected) {
     return {
