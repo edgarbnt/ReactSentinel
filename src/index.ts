@@ -79,6 +79,7 @@ type InitMcpCommandOptions = {
 type DetectProjectCommandOptions = {
   path: string;
   json: boolean;
+  targetUrl: string | null;
 };
 
 type CapabilityStatus = "planned" | "partial" | "available";
@@ -242,7 +243,7 @@ function formatHelp(): string {
     "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
     "  react-sentinel init-mcp [--client <claude-code|claude-desktop>] [--mode <local|global|npx>]",
-    "  react-sentinel detect-project [--path <dir>] [--json]",
+    "  react-sentinel detect-project [--path <dir>] [--target-url <url>] [--json]",
     "  react-sentinel doctor [--cdp-endpoint <url>] [--json]",
     "  react-sentinel help",
     "",
@@ -261,6 +262,7 @@ function formatHelp(): string {
     "  --verbose             Print agent-friendly startup metadata to stderr.",
     "  --json                Print doctor results as JSON.",
     "  --path <dir>          Base directory scanned by detect-project (defaults to the current directory).",
+    "  --target-url <url>    Manual URL fallback used when detect-project should trust a caller-provided target.",
     "  --config-path <path>  Validate an existing MCP config file during doctor or init-mcp --write.",
     "  --client <name>       Target MCP client for init-mcp (claude-code or claude-desktop).",
     "  --mode <name>         Launch mode for init-mcp (local, global, or npx).",
@@ -273,7 +275,7 @@ function formatHelp(): string {
     "Examples:",
     "  npx react-sentinel mcp --headed",
     "  npx react-sentinel doctor --json",
-    "  react-sentinel detect-project --path . --json",
+    "  react-sentinel detect-project --path . --target-url http://127.0.0.1:3000 --json",
     "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
     "  react-sentinel init-mcp --client claude-desktop --mode local",
   ].join("\n");
@@ -383,14 +385,25 @@ function parseDetectProjectOptions(args: string[]): { options: DetectProjectComm
       help: { type: "boolean", short: "h", default: false },
       json: { type: "boolean", default: false },
       path: { type: "string" },
+      "target-url": { type: "string" },
       version: { type: "boolean", short: "v", default: false },
     },
   });
+
+  const targetUrl = parsed.values["target-url"] ?? null;
+  if (targetUrl) {
+    try {
+      new URL(targetUrl);
+    } catch {
+      throw new Error(`Invalid value for --target-url: "${targetUrl}". It must be an absolute URL.`);
+    }
+  }
 
   return {
     options: {
       path: path.resolve(parsed.values.path ?? process.cwd()),
       json: parsed.values.json,
+      targetUrl,
     },
     help: parsed.values.help,
     version: parsed.values.version,
@@ -631,12 +644,15 @@ async function runInitMcp(options: InitMcpCommandOptions): Promise<void> {
 async function runDetectProject(options: DetectProjectCommandOptions): Promise<void> {
   const candidates = await detectProjectCandidates(options.path);
   const selected = candidates[0] ?? null;
+  const resolvedTargetUrl = options.targetUrl ?? selected?.devServer.activeUrl ?? selected?.devServer.suggestedUrl ?? null;
 
   if (options.json) {
     console.log(
       JSON.stringify(
         {
           basePath: options.path,
+          manualTargetUrl: options.targetUrl,
+          resolvedTargetUrl,
           selected,
           candidates,
         },
@@ -648,6 +664,12 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
   }
 
   if (!selected) {
+    if (options.targetUrl) {
+      console.log(`No React, Next.js, or Vite project was detected under ${options.path}.`);
+      console.log(`Manual target URL: ${options.targetUrl}`);
+      return;
+    }
+
     console.log(`No React, Next.js, or Vite project was detected under ${options.path}.`);
     return;
   }
@@ -671,6 +693,11 @@ async function runDetectProject(options: DetectProjectCommandOptions): Promise<v
     lines.push(`Active dev server: ${selected.devServer.activeUrl}`);
   } else if (selected.devServer.suggestedUrl) {
     lines.push(`Suggested dev server: ${selected.devServer.suggestedUrl}`);
+  }
+
+  if (options.targetUrl) {
+    lines.push(`Manual target URL: ${options.targetUrl}`);
+    lines.push(`Resolved target URL: ${resolvedTargetUrl}`);
   }
 
   if (selected.devServer.source) {
