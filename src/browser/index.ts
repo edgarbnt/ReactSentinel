@@ -216,6 +216,7 @@ export class BrowserManager {
   private consoleEvents: ConsoleEvent[] = [];
   private runtimeEventPage: Page | null = null;
   private readonly observedPages = new WeakSet<Page>();
+  private static readonly consoleEventsLimit = 500;
   private static readonly networkBufferGlobalKey = "__RS_NETWORK_EVENTS__";
   private static readonly networkBufferLimit = 200;
   private static readonly runtimeBridgeInstalledGlobalKey = "__RS_RUNTIME_BRIDGE_INSTALLED__";
@@ -327,13 +328,13 @@ export class BrowserManager {
     const source = patch.source.trim();
     if (patch.type !== "script") {
       return {
-        error: `Unsupported runtime patch type "${patch.type}". Sprint 9 only supports "script".`,
+        error: `Unsupported runtime patch type "${patch.type}". Only "script" is supported.`,
       };
     }
 
     if (patch.target !== "page") {
       return {
-        error: `Unsupported runtime patch target "${patch.target}". Sprint 9 only supports "page".`,
+        error: `Unsupported runtime patch target "${patch.target}". Only "page" is supported.`,
       };
     }
 
@@ -581,7 +582,7 @@ export class BrowserManager {
       if (msgType === "warning") type = "warn";
       if (msgType === "error") type = "error";
 
-      this.consoleEvents.push({
+      this.pushConsoleEvent({
         type,
         text: msg.text(),
         location: msg.location().url,
@@ -591,12 +592,19 @@ export class BrowserManager {
 
     page.on("pageerror", (err: Error) => {
       if (this.runtimeEventPage !== page) return;
-      this.consoleEvents.push({
+      this.pushConsoleEvent({
         type: "exception",
         text: err.stack || err.message,
         timestamp: new Date().toISOString(),
       });
     });
+  }
+
+  private pushConsoleEvent(event: ConsoleEvent): void {
+    this.consoleEvents.push(event);
+    if (this.consoleEvents.length > BrowserManager.consoleEventsLimit) {
+      this.consoleEvents.splice(0, this.consoleEvents.length - BrowserManager.consoleEventsLimit);
+    }
   }
 
   private activateRuntimePage(page: Page): void {
