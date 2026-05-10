@@ -54,12 +54,18 @@ async function main(): Promise<void> {
     const demo = await ensureDemoApp(managedProcesses);
     checks.push(`demo-app:${demo.reused ? "reused" : "started"}`);
 
-    const { client, transport: connectedTransport } = await connectMcpClient(serverLogs, {
+    const { client, transport: connectedTransport, launch } = await connectMcpClient(serverLogs, {
       name: "react-sentinel-e2e-smoke",
       version: "0.1.0",
     });
     transport = connectedTransport;
     checks.push("mcp-connect:ok");
+    checks.push(`mcp-launch:${launch.mode}`);
+    assert(serverLogs.some((line) => line.includes("MCP server started")), "Child-process MCP startup log was not captured.");
+    assert(
+      serverLogs.some((line) => line.includes("Verbose startup metadata")),
+      "Child-process MCP verbose startup metadata was not captured."
+    );
 
     const toolsResult = await client.listTools();
     const toolNames = new Set(toolsResult.tools.map((tool) => tool.name));
@@ -74,8 +80,10 @@ async function main(): Promise<void> {
 
     const serverInfo = expectToolSuccess(await callTool(client, "get_server_info"), "get_server_info") as {
       capabilities: Record<string, string>;
+      capabilityDetails: Record<string, { tools: string[]; modes: string[] }>;
+      capabilitiesByMode: Record<string, Record<string, string[]>>;
     };
-    assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
+    assert(serverInfo.capabilities.shadow_sandbox === "partial", "shadow_sandbox capability should report partial support.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
     assert(serverInfo.capabilities.get_async_timeline === "available", "get_async_timeline capability missing.");
     assert(
@@ -86,6 +94,26 @@ async function main(): Promise<void> {
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
     assert(serverInfo.capabilities.get_hook_changes === "available", "get_hook_changes capability missing.");
+    assert(
+      serverInfo.capabilityDetails.apply_patch_then_replay?.tools.includes("apply_patch_then_replay"),
+      "apply_patch_then_replay capability is not mapped to its MCP tool."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.sandbox?.available?.includes("apply_patch_then_replay"),
+      "sandbox capability map is missing apply_patch_then_replay."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.attach?.available?.includes("select_attach_tab"),
+      "attach capability map is missing select_attach_tab."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.replay?.available?.includes("browser_ping"),
+      "replay capability map is missing browser_ping."
+    );
+    assert(
+      serverInfo.capabilitiesByMode.sandbox?.partial?.includes("shadow_sandbox"),
+      "sandbox capability map should expose partial shadow_sandbox."
+    );
     checks.push("get_server_info:ok");
 
     const echo = expectToolSuccess(await callTool(client, "echo", { message: "react-sentinel-e2e" }), "echo") as {

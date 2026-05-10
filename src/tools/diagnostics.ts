@@ -17,6 +17,21 @@ const inspectionResponseModeSchema = z
   .default("full")
   .describe("Choose 'compact' to aggressively trim long inspection payloads for AI consumption.");
 
+export const DIAGNOSTIC_TOOL_NAMES = [
+  "get_runtime_status",
+  "get_react_tree",
+  "inspect_component",
+  "get_component_state",
+  "get_render_counts",
+  "get_render_hotspots",
+  "get_hook_changes",
+  "get_async_timeline",
+  "get_race_condition_diagnosis",
+  "get_hydration_issues",
+  "get_console_events",
+  "get_runtime_timeline",
+] as const;
+
 export function register(server: McpServer): void {
   // -------------------------------------------------------------------------
   // Tool: get_runtime_status

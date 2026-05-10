@@ -10,6 +10,8 @@ import { browserManager } from "../browser/index.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
+export const NETWORK_TOOL_NAMES = ["get_network_events"] as const;
+
 export function register(server: McpServer): void {
   server.tool(
     "get_network_events",
