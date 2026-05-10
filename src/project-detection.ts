@@ -69,34 +69,42 @@ function detectFramework(packageJsonPath: string, manifest: PackageJson): Projec
   const devDependencies = manifest.devDependencies ?? {};
   const evidence: string[] = [];
   let framework: DetectedFramework | null = null;
+  let selectedFrameworkScore = 0;
   let score = 0;
 
+  const selectFramework = (candidate: DetectedFramework, candidateScore: number): void => {
+    if (candidateScore > selectedFrameworkScore) {
+      framework = candidate;
+      selectedFrameworkScore = candidateScore;
+    }
+  };
+
   if (typeof dependencies.next === "string") {
-    framework = "next";
+    selectFramework("next", 6);
     score += 6;
     evidence.push("dependencies.next");
   }
 
   if (typeof devDependencies.vite === "string" || typeof dependencies.vite === "string") {
-    framework = "vite-react";
+    selectFramework("vite-react", 4);
     score += 4;
     evidence.push(typeof devDependencies.vite === "string" ? "devDependencies.vite" : "dependencies.vite");
   }
 
   if (typeof devDependencies["@vitejs/plugin-react"] === "string") {
-    framework = "vite-react";
+    selectFramework("vite-react", 4);
     score += 4;
     evidence.push("devDependencies.@vitejs/plugin-react");
   }
 
   if (typeof dependencies.react === "string") {
-    framework ??= "react";
+    selectFramework("react", 2);
     score += 2;
     evidence.push("dependencies.react");
   }
 
   if (typeof dependencies["react-dom"] === "string") {
-    framework ??= "react";
+    selectFramework("react", 2);
     score += 2;
     evidence.push("dependencies.react-dom");
   }
