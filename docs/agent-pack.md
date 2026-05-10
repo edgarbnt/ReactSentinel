@@ -4,7 +4,7 @@
 
 The agent pack turns React-Sentinel into a project-local integration bundle that an AI coding agent can install, inspect, update, and remove without hand-editing every file.
 
-Claude Code is the primary target. The same pack also exposes a generic MCP profile plus documented adaptations for Gemini CLI and Copilot.
+Claude Code is the primary target. The same pack also exposes a generic MCP profile plus documented adaptations for Cursor, Gemini CLI, and Copilot.
 
 ## Target format
 
@@ -33,7 +33,7 @@ The repository keeps the reusable pack assets under `assets/agent-pack/`. Instal
 | `.react-sentinel/agent-pack/commands/validate-fix.md` | Validation routine for assertions or Shadow Sandbox |
 | `.react-sentinel/agent-pack/skills/react-sentinel-debug.md` | Reusable agent instructions for when and how to call React-Sentinel |
 | `.react-sentinel/agent-pack/docs/heuristics.md` | Trigger signals, non-trigger rules, and mode decision guidance |
-| `.react-sentinel/agent-pack/docs/compatibility.md` | Compatibility matrix across Claude Code, generic MCP, Gemini CLI, and Copilot |
+| `.react-sentinel/agent-pack/docs/compatibility.md` | Compatibility matrix across Claude Code, generic MCP, Cursor, Gemini CLI, and Copilot |
 | `.react-sentinel/agent-pack/profiles/*.md` | Per-agent profile notes and integration constraints |
 | `.mcp.json` | Claude Code MCP config entry written or updated by install/update flows |
 
@@ -50,7 +50,7 @@ The MCP entry remains standard stdio JSON and reuses the existing React-Sentinel
 
 - `local` -> `node /absolute/path/to/dist/index.js mcp --headless`
 - `global` -> `react-sentinel mcp --headless`
-- `npx` -> `npx -y react-sentinel mcp --headless`
+- `npx` -> `npx -y @edgarbrunet/react-sentinel mcp --headless`
 
 ## Compatibility boundaries
 
@@ -61,6 +61,7 @@ The MCP entry remains standard stdio JSON and reuses the existing React-Sentinel
 
 ### Documented, not auto-wired
 
+- **Cursor** adaptation notes
 - **Gemini CLI** adaptation notes
 - **Copilot** adaptation notes
 

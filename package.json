@@ -1,12 +1,18 @@
 {
-  "name": "react-sentinel",
+  "name": "@edgarbrunet/react-sentinel",
   "version": "0.1.0",
-  "description": "Autonomous debugging infrastructure for AI agents — MCP server bridging AI terminals to browser runtime",
+  "description": "Runtime debugger for AI agents — MCP server for live React inspection, bug replay, and fix validation",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
     "react-sentinel": "dist/index.js"
   },
+  "files": [
+    "dist/",
+    "assets/agent-pack/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",

@@ -20,3 +20,13 @@
 2. Can Replay reproduce the issue safely? If yes, start there.
 3. Does the issue depend on real browser state? If yes, consider Attach.
 4. Is the bug already reproduced and the goal is hypothesis testing? If yes, consider Shadow Sandbox.
+
+## Recommended tool order
+
+1. `get_server_info`
+2. `get_session_status`
+3. `get_console_events` and `get_network_events`
+4. `inspect_component` or `get_react_tree`
+5. `get_component_state`
+6. `validate_after_action` or `validate_scenario`
+7. `apply_patch_then_replay` only after the bug is proven in replay mode

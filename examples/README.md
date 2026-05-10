@@ -29,3 +29,5 @@ pnpm dev
 Then point React-Sentinel at `http://localhost:5173` and use the MCP tools to inspect and debug the running application.
 
 For hydration-specific diagnostics, open `http://localhost:5173/hydration-nextjs.html`.
+
+See [../docs/local-ports.md](../docs/local-ports.md) for the full list of documented local ports and endpoints used by the repo.

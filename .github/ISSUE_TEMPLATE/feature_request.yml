@@ -1,0 +1,38 @@
+name: Feature Request
+description: Suggest a new capability or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before submitting, check open issues and the [docs/](../docs/) folder to see if the feature is already being tracked or documented.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem does this solve? What is currently painful or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you would like to see. Pseudocode, tool names, or UX descriptions are all helpful.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds have you tried? Why are they insufficient?
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Who benefits?
+      options:
+        - AI agent users (tool consumers)
+        - IDE / MCP client integrators
+        - Contributors / maintainers
+        - All of the above
+    validations:
+      required: true

@@ -19,12 +19,16 @@ Use React-Sentinel only when the task benefits from **observing a live browser r
 
 ## Preferred order
 
-1. `debug-react`
-2. `reproduce-bug`
-3. `validate-fix`
+1. `get_server_info`
+2. `get_session_status`
+3. `debug-react`
+4. `reproduce-bug`
+5. `validate-fix`
 
 ## Mode rules
 
 - Prefer **Replay** by default.
 - Escalate to **Attach** only for real user state.
 - Use **Shadow Sandbox** only after replay already proves the bug.
+- Turn the bug into `validate_after_action` or `validate_scenario` assertions before proposing a source change.
+- Prefer `apply_patch_then_replay` over speculative source edits when testing one runtime hypothesis.

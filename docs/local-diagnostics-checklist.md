@@ -74,3 +74,5 @@ Fix:
 1. Start the target app locally
 2. Verify the URL in your MCP request
 3. Retry with a reachable URL such as the demo app (`http://127.0.0.1:5173`)
+
+See [local-ports.md](local-ports.md) for the full list of legitimate local URLs and ports used in the repository.
