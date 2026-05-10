@@ -7,7 +7,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { browserManager, DEFAULT_CDP_ENDPOINT } from "../browser/index.js";
+import { browserManager } from "../browser/index.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
@@ -99,12 +99,11 @@ export function register(server: McpServer): void {
         .string()
         .url()
         .optional()
-        .default(DEFAULT_CDP_ENDPOINT)
         .describe("Base CDP endpoint URL to inspect (e.g. http://127.0.0.1:9222)."),
     },
     async ({ endpoint }): Promise<ToolResponse> => {
       try {
-        const result = await browserManager.getAttachStatus(endpoint);
+        const result = await browserManager.getAttachStatus(endpoint ?? browserManager.getDefaultCdpEndpoint());
         return ok(result);
       } catch (e) {
         return err(`get_attach_status failed unexpectedly: ${String(e)}`);
@@ -155,14 +154,13 @@ export function register(server: McpServer): void {
         .string()
         .url()
         .optional()
-        .default(DEFAULT_CDP_ENDPOINT)
         .describe("Base CDP endpoint URL to inspect."),
       url: z.string().optional().describe("Optional substring filter applied to the tab URL."),
       title: z.string().optional().describe("Optional substring filter applied to the tab title."),
     },
     async ({ endpoint, url, title }): Promise<ToolResponse> => {
       try {
-        const result = await browserManager.getAttachTabs(endpoint, url, title);
+        const result = await browserManager.getAttachTabs(endpoint ?? browserManager.getDefaultCdpEndpoint(), url, title);
         if ("error" in result) return err(result.error);
         return ok(result);
       } catch (e) {
@@ -186,7 +184,6 @@ export function register(server: McpServer): void {
         .string()
         .url()
         .optional()
-        .default(DEFAULT_CDP_ENDPOINT)
         .describe("Base CDP endpoint URL to inspect."),
       selector: attachTabSelectorSchema.describe("How to identify the tab to select."),
       confirm: z
@@ -199,7 +196,11 @@ export function register(server: McpServer): void {
     },
     async ({ endpoint, selector, confirm }): Promise<ToolResponse> => {
       try {
-        const result = await browserManager.selectAttachTab(endpoint, selector, confirm);
+        const result = await browserManager.selectAttachTab(
+          endpoint ?? browserManager.getDefaultCdpEndpoint(),
+          selector,
+          confirm
+        );
         if ("error" in result) return err(result.error);
         return ok(result);
       } catch (e) {

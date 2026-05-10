@@ -203,6 +203,7 @@ export class BrowserManager {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private replayHeadless = true;
+  private defaultCdpEndpoint = DEFAULT_CDP_ENDPOINT;
   private replaySessionId: number | null = null;
   private nextReplaySessionId = 1;
   private attachedBrowser: Browser | null = null;
@@ -551,6 +552,23 @@ export class BrowserManager {
     );
   }
 
+  configureDefaults(options: {
+    replayHeadless?: boolean;
+    cdpEndpoint?: string;
+  }): void {
+    if (typeof options.replayHeadless === "boolean") {
+      this.replayHeadless = options.replayHeadless;
+    }
+
+    if (typeof options.cdpEndpoint === "string") {
+      this.defaultCdpEndpoint = options.cdpEndpoint;
+    }
+  }
+
+  getDefaultCdpEndpoint(): string {
+    return this.defaultCdpEndpoint;
+  }
+
   private setupListeners(page: Page): void {
     if (this.observedPages.has(page)) return;
     this.observedPages.add(page);
@@ -763,7 +781,7 @@ export class BrowserManager {
   private formatNavigationError(error: unknown, url: string, timeoutMs: number): string {
     const raw = error instanceof Error ? error.message : String(error);
     if (raw.includes("ERR_CONNECTION_REFUSED") || raw.includes("ECONNREFUSED")) {
-      return `Cannot connect to ${url} — is the app running?`;
+      return `Cannot connect to ${url} — is the app running? Start the target app locally or switch to a reachable URL before retrying.`;
     }
 
     if (raw.includes("ERR_NAME_NOT_RESOLVED")) {
@@ -831,7 +849,9 @@ export class BrowserManager {
   private async getAttachedPage(): Promise<Page> {
     const selection = this.attachSelection;
     if (!selection) {
-      throw new Error("No CDP tab is currently selected. Run select_attach_tab with confirm: true first.");
+      throw new Error(
+        "No live Chrome tab is selected. Run get_attach_tabs and select_attach_tab with confirm: true, or stay in replay mode with navigate_replay/browser_ping."
+      );
     }
 
     if (
@@ -847,14 +867,25 @@ export class BrowserManager {
 
     await this.clearAttachConnection();
 
-    const browser = await chromium.connectOverCDP(selection.endpoint);
+    let browser: Browser;
+    try {
+      browser = await chromium.connectOverCDP(selection.endpoint);
+    } catch (error) {
+      throw new Error(
+        [
+          `Chrome CDP is unavailable at ${selection.endpoint}: ${error instanceof Error ? error.message : String(error)}.`,
+          BrowserManager.cdpHelpMessage,
+          "You can keep using replay mode with browser_ping or navigate_replay while live Chrome attach is unavailable.",
+        ].join(" ")
+      );
+    }
 
     try {
       const attachedPage = await this.findAttachedPage(browser, selection.tab.id);
       if (!attachedPage) {
         this.attachSelection = null;
         throw new Error(
-          "The selected CDP tab is no longer available. Run get_attach_tabs and select_attach_tab again."
+          "The selected live Chrome tab is no longer available. Run get_attach_tabs and select_attach_tab again, or switch back to replay mode with navigate_replay."
         );
       }
 
@@ -940,6 +971,13 @@ export class BrowserManager {
     return BrowserManager.cdpHelpMessage;
   }
 
+  private static buildAttachUnavailableMessage(endpoint: string, reason: string): string {
+    return [
+      `Chrome CDP is unavailable at ${endpoint}: ${reason}.`,
+      "You can keep using replay mode with browser_ping or navigate_replay while live Chrome attach is unavailable.",
+    ].join(" ");
+  }
+
   async navigateReplay(
     url: string,
     options?: {
@@ -974,7 +1012,7 @@ export class BrowserManager {
   }
 
   async getAttachStatus(
-    endpoint: string = DEFAULT_CDP_ENDPOINT
+    endpoint: string = this.defaultCdpEndpoint
   ): Promise<AttachStatus> {
     const checkedAt = new Date().toISOString();
     const help = BrowserManager.buildAttachHelpMessage();
@@ -995,7 +1033,7 @@ export class BrowserManager {
         ready: false,
         reachable,
         help,
-        error,
+        error: BrowserManager.buildAttachUnavailableMessage(endpoint, error),
       };
     }
 
@@ -1009,7 +1047,10 @@ export class BrowserManager {
         ready: false,
         reachable: true,
         help,
-        error: "CDP endpoint is reachable but does not expose webSocketDebuggerUrl",
+        error: BrowserManager.buildAttachUnavailableMessage(
+          endpoint,
+          "the endpoint is reachable but does not expose webSocketDebuggerUrl"
+        ),
       };
     }
 
@@ -1028,7 +1069,7 @@ export class BrowserManager {
   }
 
   async getAttachTabs(
-    endpoint: string = DEFAULT_CDP_ENDPOINT,
+    endpoint: string = this.defaultCdpEndpoint,
     urlFilter?: string,
     titleFilter?: string
   ): Promise<AttachTabsResponse | { error: string }> {
@@ -1036,12 +1077,14 @@ export class BrowserManager {
     const listOrError = await this.readCdpJson<CdpTargetInfo[]>(endpoint, "/json/list");
 
     if ("error" in listOrError) {
-      return listOrError;
+      return {
+        error: BrowserManager.buildAttachUnavailableMessage(endpoint, listOrError.error),
+      };
     }
 
     if (!Array.isArray(listOrError)) {
       return {
-        error: "CDP endpoint returned an invalid /json/list payload",
+        error: BrowserManager.buildAttachUnavailableMessage(endpoint, "the endpoint returned an invalid /json/list payload"),
       };
     }
 
@@ -1081,7 +1124,7 @@ export class BrowserManager {
   }
 
   async selectAttachTab(
-    endpoint: string = DEFAULT_CDP_ENDPOINT,
+    endpoint: string = this.defaultCdpEndpoint,
     selector: AttachTabSelector,
     confirm: boolean = false
   ): Promise<AttachTabSelectionResponse | { error: string }> {
@@ -1089,12 +1132,14 @@ export class BrowserManager {
     const listOrError = await this.readCdpJson<CdpTargetInfo[]>(endpoint, "/json/list");
 
     if ("error" in listOrError) {
-      return listOrError;
+      return {
+        error: BrowserManager.buildAttachUnavailableMessage(endpoint, listOrError.error),
+      };
     }
 
     if (!Array.isArray(listOrError)) {
       return {
-        error: "CDP endpoint returned an invalid /json/list payload",
+        error: BrowserManager.buildAttachUnavailableMessage(endpoint, "the endpoint returned an invalid /json/list payload"),
       };
     }
 
