@@ -25,6 +25,7 @@ const expectedTools = [
   "get_react_tree",
   "inspect_component",
   "get_component_state",
+  "get_async_timeline",
   "get_hydration_issues",
   "get_render_counts",
   "get_render_hotspots",
@@ -75,6 +76,7 @@ async function main(): Promise<void> {
     };
     assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
+    assert(serverInfo.capabilities.get_async_timeline === "available", "get_async_timeline capability missing.");
     assert(serverInfo.capabilities.get_hydration_issues === "available", "get_hydration_issues capability missing.");
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
@@ -315,6 +317,42 @@ async function main(): Promise<void> {
     ) as { summary: { bySource: Record<string, number> } };
     assert((runtimeTimeline.summary.bySource.network ?? 0) >= 1, "get_runtime_timeline did not include network events.");
     checks.push("get_runtime_timeline:ok");
+
+    const asyncTraceReplay = expectToolSuccess(
+      await callTool(client, "replay_interactions", {
+        url: demoUrl,
+        resetSession: true,
+        steps: [
+          { action: "click", selector: "#async-trace-run-button" },
+          { action: "wait", durationMs: 900 },
+        ],
+      }),
+      "replay_interactions(async-trace)"
+    ) as { success: boolean };
+    assert(asyncTraceReplay.success === true, "async trace replay failed.");
+
+    const asyncTimeline = expectToolSuccess(
+      await callTool(client, "get_async_timeline", { url: demoUrl, limit: 10 }),
+      "get_async_timeline"
+    ) as {
+      events: { phase: string; groupKey: string }[];
+      summary: { totalRequests: number; invertedGroups: { groupKey: string }[]; slowRequests: { durationMs: number }[] };
+    };
+    assert(asyncTimeline.summary.totalRequests >= 2, "get_async_timeline reported fewer than two requests.");
+    assert(
+      asyncTimeline.events.some((event) => event.phase === "request_start") &&
+        asyncTimeline.events.some((event) => event.phase === "request_resolve"),
+      "get_async_timeline did not include both start and resolve phases."
+    );
+    assert(
+      asyncTimeline.summary.invertedGroups.some((group) => group.groupKey.includes("/api/mock/async-trace")),
+      "get_async_timeline did not detect the inverted completion order for concurrent requests."
+    );
+    assert(
+      asyncTimeline.summary.slowRequests.some((request) => request.durationMs >= 700),
+      "get_async_timeline did not surface the slow request in its summary."
+    );
+    checks.push("get_async_timeline:ok");
 
     const validateScenario = expectToolSuccess(
       await callTool(client, "validate_scenario", {

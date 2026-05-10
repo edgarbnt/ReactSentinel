@@ -286,3 +286,54 @@ export interface RuntimeTimelineResponse {
   summary: RuntimeTimelineSummary;
   durationMs: number;
 }
+
+export type AsyncTimelinePhase = "request_start" | "request_resolve" | "request_reject";
+
+export interface AsyncTimelineRequestRef {
+  transport: "fetch" | "xhr";
+  method: string;
+  url: string;
+  status: number | null;
+  durationMs: number;
+  error: string | null;
+}
+
+export interface AsyncTimelineEvent {
+  requestId: string;
+  groupKey: string;
+  label: string;
+  phase: AsyncTimelinePhase;
+  timestamp: string;
+  sequence: number;
+  request: AsyncTimelineRequestRef;
+}
+
+export interface AsyncTimelineInvertedGroup {
+  groupKey: string;
+  requestIds: string[];
+  startedOrder: string[];
+  settledOrder: string[];
+}
+
+export interface AsyncTimelineRequestSummary {
+  requestId: string;
+  label: string;
+  groupKey: string;
+  durationMs: number;
+  status: number | null;
+}
+
+export interface AsyncTimelineSummary {
+  totalEvents: number;
+  totalRequests: number;
+  groups: number;
+  invertedGroups: AsyncTimelineInvertedGroup[];
+  slowRequests: AsyncTimelineRequestSummary[];
+}
+
+export interface AsyncTimelineResponse {
+  url: string;
+  events: AsyncTimelineEvent[];
+  summary: AsyncTimelineSummary;
+  durationMs: number;
+}

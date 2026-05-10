@@ -271,6 +271,39 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_async_timeline
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_async_timeline",
+    [
+      "Return an async timeline derived from the captured fetch/XHR lifecycle.",
+      "Useful for spotting concurrent requests, slow operations, and completion order inversions.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of recent requests to convert into async timeline events. Default is 50."),
+    },
+    async ({ url, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getAsyncTimeline(url, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_async_timeline failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_hydration_issues
   // -------------------------------------------------------------------------
   server.tool(

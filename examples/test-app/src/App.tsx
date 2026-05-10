@@ -4,6 +4,7 @@ import { BuggySearch } from "./components/BuggySearch";
 import { DiagnosisApiScenario } from "./components/DiagnosisApiScenario";
 import { InfiniteLoopScenario } from "./components/InfiniteLoopScenario";
 import { MockApiScenario } from "./components/MockApiScenario";
+import { AsyncTraceScenario } from "./components/AsyncTraceScenario";
 import { ThemeContextScenario } from "./components/ThemeContextScenario";
 
 export default function App(): JSX.Element {
@@ -39,6 +40,7 @@ export default function App(): JSX.Element {
 
       <MockApiScenario />
       <DiagnosisApiScenario />
+      <AsyncTraceScenario />
       <InfiniteLoopScenario />
       <BuggySearch />
       <ThemeContextScenario />

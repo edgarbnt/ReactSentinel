@@ -43,6 +43,7 @@ import type {
   ValidationScenarioResponse,
 } from "./protocol.js";
 import type {
+  AsyncTimelineResponse,
   RuntimeStatus,
   ComponentInspectionResponse,
   ComponentStateResponse,
@@ -61,6 +62,7 @@ import type {
 } from "../diagnostics/protocol.js";
 import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
+import { readAsyncTimelineFromNetworkEvents } from "../diagnostics/async-timeline.js";
 import {
   buildRenderMonitorSource,
   readHookChangesState,
@@ -1184,6 +1186,7 @@ export class BrowserManager {
       | "get_react_tree"
       | "inspect_component"
       | "get_component_state"
+      | "get_async_timeline"
       | "get_hydration_issues"
       | "get_render_counts"
       | "get_render_hotspots"
@@ -1674,6 +1677,28 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleError(e, url);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getAsyncTimeline() — Sprint 11
+  // ---------------------------------------------------------------------------
+  async getAsyncTimeline(url: string, limit: number = 50): Promise<AsyncTimelineResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const networkEvents = await this.readNetworkEvents(page);
+      const result = readAsyncTimelineFromNetworkEvents(networkEvents, { limit });
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        events: result.events,
+        summary: result.summary,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_async_timeline");
     }
   }
 
