@@ -26,6 +26,7 @@ const expectedTools = [
   "inspect_component",
   "get_component_state",
   "get_async_timeline",
+  "get_race_condition_diagnosis",
   "get_hydration_issues",
   "get_render_counts",
   "get_render_hotspots",
@@ -77,6 +78,10 @@ async function main(): Promise<void> {
     assert(serverInfo.capabilities.shadow_sandbox === "available", "shadow_sandbox capability is not available.");
     assert(serverInfo.capabilities.apply_patch_then_replay === "available", "apply_patch_then_replay capability missing.");
     assert(serverInfo.capabilities.get_async_timeline === "available", "get_async_timeline capability missing.");
+    assert(
+      serverInfo.capabilities.get_race_condition_diagnosis === "available",
+      "get_race_condition_diagnosis capability missing."
+    );
     assert(serverInfo.capabilities.get_hydration_issues === "available", "get_hydration_issues capability missing.");
     assert(serverInfo.capabilities.get_render_counts === "available", "get_render_counts capability missing.");
     assert(serverInfo.capabilities.get_render_hotspots === "available", "get_render_hotspots capability missing.");
@@ -353,6 +358,48 @@ async function main(): Promise<void> {
       "get_async_timeline did not surface the slow request in its summary."
     );
     checks.push("get_async_timeline:ok");
+
+    const raceConditionReplay = expectToolSuccess(
+      await callTool(client, "replay_interactions", {
+        url: demoUrl,
+        resetSession: true,
+        steps: [
+          { action: "click", selector: "#race-condition-run-button" },
+          { action: "wait", durationMs: 900 },
+        ],
+      }),
+      "replay_interactions(race-condition)"
+    ) as { success: boolean };
+    assert(raceConditionReplay.success === true, "race condition replay failed.");
+
+    const raceDiagnosis = expectToolSuccess(
+      await callTool(client, "get_race_condition_diagnosis", {
+        url: demoUrl,
+        stateSelector: "#race-condition-visible-result",
+        limit: 10,
+      }),
+      "get_race_condition_diagnosis"
+    ) as {
+      suspected: boolean;
+      diagnosis: string;
+      finalStateText: string | null;
+      latestIntent: { query: string | null } | null;
+      finalStateRequest: { query: string | null } | null;
+    };
+    assert(raceDiagnosis.suspected === true, "get_race_condition_diagnosis did not flag the stale overwrite.");
+    assert(
+      raceDiagnosis.finalStateText?.toLowerCase().includes("slow") === true,
+      "Race condition final state did not expose the stale slow result."
+    );
+    assert(
+      raceDiagnosis.latestIntent?.query === "fast" && raceDiagnosis.finalStateRequest?.query === "slow",
+      "Race condition diagnosis did not relate the latest intent to the overwritten final state."
+    );
+    assert(
+      /overwrote newer state|latest intent/i.test(raceDiagnosis.diagnosis),
+      "Race condition diagnosis was not readable enough."
+    );
+    checks.push("get_race_condition_diagnosis:ok");
 
     const validateScenario = expectToolSuccess(
       await callTool(client, "validate_scenario", {

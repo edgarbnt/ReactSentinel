@@ -44,6 +44,7 @@ import type {
 } from "./protocol.js";
 import type {
   AsyncTimelineResponse,
+  RaceConditionDiagnosisResponse,
   RuntimeStatus,
   ComponentInspectionResponse,
   ComponentStateResponse,
@@ -63,6 +64,7 @@ import type {
 import type { ReactRuntimeInspectRequest } from "../diagnostics/react-runtime.js";
 import { detectReact } from "../diagnostics/react-detector.js";
 import { readAsyncTimelineFromNetworkEvents } from "../diagnostics/async-timeline.js";
+import { diagnoseRaceCondition } from "../diagnostics/race-condition.js";
 import {
   buildRenderMonitorSource,
   readHookChangesState,
@@ -1187,6 +1189,7 @@ export class BrowserManager {
       | "inspect_component"
       | "get_component_state"
       | "get_async_timeline"
+      | "get_race_condition_diagnosis"
       | "get_hydration_issues"
       | "get_render_counts"
       | "get_render_hotspots"
@@ -1699,6 +1702,37 @@ export class BrowserManager {
       };
     } catch (e) {
       return this.handleInspectionError(e, url, "get_async_timeline");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRaceConditionDiagnosis() — Sprint 11
+  // ---------------------------------------------------------------------------
+  async getRaceConditionDiagnosis(
+    url: string,
+    stateSelector: string,
+    limit: number = 50
+  ): Promise<RaceConditionDiagnosisResponse | { error: string }> {
+    const start = Date.now();
+
+    try {
+      const page = await this.getRuntimePage(url);
+      const networkEvents = await this.readNetworkEvents(page);
+      const timeline = readAsyncTimelineFromNetworkEvents(networkEvents, { limit });
+      const finalStateText = await page.evaluate((selector) => {
+        return document.querySelector(selector)?.textContent?.trim() ?? null;
+      }, stateSelector);
+      const diagnosis = diagnoseRaceCondition(timeline.events, timeline.summary.invertedGroups, finalStateText);
+
+      return {
+        url: await page.evaluate(() => document.URL),
+        stateSelector,
+        finalStateText,
+        ...diagnosis,
+        durationMs: Date.now() - start,
+      };
+    } catch (e) {
+      return this.handleInspectionError(e, url, "get_race_condition_diagnosis");
     }
   }
 

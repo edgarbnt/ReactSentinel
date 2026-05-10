@@ -337,3 +337,29 @@ export interface AsyncTimelineResponse {
   summary: AsyncTimelineSummary;
   durationMs: number;
 }
+
+export interface RaceConditionDiagnosisRequest {
+  requestId: string;
+  label: string;
+  query: string | null;
+  url: string;
+  status: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface RaceConditionDiagnosisResult {
+  suspected: boolean;
+  diagnosis: string;
+  evidence: string[];
+  latestIntent: RaceConditionDiagnosisRequest | null;
+  finalStateRequest: RaceConditionDiagnosisRequest | null;
+  invertedGroup: AsyncTimelineInvertedGroup | null;
+}
+
+export interface RaceConditionDiagnosisResponse extends RaceConditionDiagnosisResult {
+  url: string;
+  stateSelector: string;
+  finalStateText: string | null;
+  durationMs: number;
+}

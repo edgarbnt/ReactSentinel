@@ -271,6 +271,43 @@ export function register(server: McpServer): void {
   );
 
   // -------------------------------------------------------------------------
+  // Tool: get_race_condition_diagnosis
+  // -------------------------------------------------------------------------
+  server.tool(
+    "get_race_condition_diagnosis",
+    [
+      "Explain a likely UI race condition by comparing the final visible state with the recent async timeline.",
+      "Useful when a stale response may have overwritten a newer user intent.",
+    ].join(" "),
+    {
+      url: z
+        .string()
+        .url()
+        .describe("URL of the page to inspect (e.g. http://localhost:5173)."),
+      stateSelector: z
+        .string()
+        .min(1)
+        .describe("CSS selector pointing to the UI element that shows the final visible state."),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .describe("Maximum number of recent requests to inspect. Default is 50."),
+    },
+    async ({ url, stateSelector, limit = 50 }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.getRaceConditionDiagnosis(url, stateSelector, limit);
+        if ("error" in result) return err(result.error);
+        return ok(result);
+      } catch (e) {
+        return err(`get_race_condition_diagnosis failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------------
   // Tool: get_async_timeline
   // -------------------------------------------------------------------------
   server.tool(

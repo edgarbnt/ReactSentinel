@@ -66,6 +66,7 @@ server.tool(
           get_runtime_status: "available",
           get_component_state: "available",
           get_async_timeline: "available",
+          get_race_condition_diagnosis: "available",
           get_hydration_issues: "available",
           get_render_counts: "available",
           get_render_hotspots: "available",

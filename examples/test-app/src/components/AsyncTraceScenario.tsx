@@ -1,21 +1,5 @@
 import { useState } from "react";
-
-type AsyncTraceResult = {
-  query: string;
-  delayMs: number;
-  message: string;
-};
-
-async function runAsyncTraceRequest(query: string, delayMs: number): Promise<AsyncTraceResult> {
-  const response = await fetch(`/api/mock/async-trace?query=${encodeURIComponent(query)}&delay=${delayMs}`);
-  const payload = (await response.json()) as { query?: string; delayMs?: number; message?: string };
-
-  return {
-    query: payload.query ?? query,
-    delayMs: payload.delayMs ?? delayMs,
-    message: payload.message ?? "Async trace response ready",
-  };
-}
+import { runAsyncTraceRequest } from "../lib/asyncTraceRequest";
 
 export function AsyncTraceScenario(): JSX.Element {
   const [status, setStatus] = useState("idle");
