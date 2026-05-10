@@ -47,15 +47,19 @@ function readMatchingRequest(
   }
 
   const normalizedStateText = finalStateText.toLowerCase();
-  return (
-    requestIds
-      .map((requestId) => requests.get(requestId) ?? null)
-      .find((request): request is RaceConditionDiagnosisRequest =>
-        request !== null &&
-        request.query !== null &&
-        normalizedStateText.includes(request.query.toLowerCase())
-      ) ?? null
-  );
+
+  for (let index = requestIds.length - 1; index >= 0; index -= 1) {
+    const request = requests.get(requestIds[index] ?? "") ?? null;
+    if (
+      request !== null &&
+      request.query !== null &&
+      normalizedStateText.includes(request.query.toLowerCase())
+    ) {
+      return request;
+    }
+  }
+
+  return null;
 }
 
 export function diagnoseRaceCondition(
