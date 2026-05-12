@@ -43,13 +43,13 @@ Once all sub-tasks of a parent are validated:
 ## End of Sprint — MANDATORY DELIVERABLE
 The mission ends **ONLY** when these two conditions are met:
 1. The last parent ticket is marked as **"Done"** on Jira.
-2. **Report Writing**: You must create a new summary file in `docs/sprints/SPRINTX.md` (replace X with the sprint number).
+2. **Report Writing**: You must leave a final sprint summary in the pull request description or final chat update.
 
-The report must follow the project's standardized structure:
+The summary must cover:
 - **Objective**: Reminder of the sprint's goals.
 - **Key Accomplishments**: Detailed list of features or fixes delivered.
 - **Technical Choices**: Justification for structural choices.
 - **Validation**: Evidence of correct operation (tests, builds, checks).
 - **Jira Tickets Completed**: Exhaustive list of closed tickets.
 
-Once the file is created and committed, provide a global summary in the chat with the link to the branch and the new report.
+Once the work is committed, provide a global summary in the chat with the branch link and the delivery summary.

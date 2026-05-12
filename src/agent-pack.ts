@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildMcpServerConfig, resolveDefaultConfigPath, type McpInstallMode, type McpServerConfig } from "./mcp-config.js";
 
-export type AgentPackFileKind = "readme" | "command" | "skill" | "doc" | "profile";
+export type AgentPackFileKind = "readme" | "command" | "skill" | "doc" | "agent";
 export type AgentPackProfileId = "claude-code" | "generic-mcp" | "cursor" | "gemini-cli" | "copilot-cli";
 
 export type AgentPackTemplateDefinition = {
@@ -46,15 +46,15 @@ export type AgentPackManifest = {
   }>;
 };
 
-export const AGENT_PACK_ROOT = path.join(".react-sentinel", "agent-pack");
-export const AGENT_PACK_MANIFEST_FILENAME = "manifest.json";
+export const AGENT_PACK_ROOT = ".claude";
+export const AGENT_PACK_MANIFEST_FILENAME = ".react-sentinel-manifest.json";
 export const AGENT_PACK_PRIMARY_PROFILE = "claude-code";
 
 const supportedProfiles: AgentPackManifest["profiles"] = [
   {
     id: "claude-code",
     support: "primary",
-    summary: "Project-local installation target with a managed .mcp.json entry.",
+    summary: "Project-local Claude Code installation with managed slash commands, skills, agents, and .mcp.json wiring.",
   },
   {
     id: "generic-mcp",
@@ -103,8 +103,8 @@ const templateDefinitions: AgentPackTemplateDefinition[] = [
     kind: "command",
   },
   {
-    relativePath: "skills/react-sentinel-debug.md",
-    description: "Reusable skill text describing when and how to call React-Sentinel.",
+    relativePath: "skills/react-sentinel-debug/SKILL.md",
+    description: "Reusable Claude Code skill describing when and how to call React-Sentinel.",
     kind: "skill",
   },
   {
@@ -118,29 +118,9 @@ const templateDefinitions: AgentPackTemplateDefinition[] = [
     kind: "doc",
   },
   {
-    relativePath: "profiles/claude-code.md",
-    description: "Primary Claude Code integration profile.",
-    kind: "profile",
-  },
-  {
-    relativePath: "profiles/generic-mcp.md",
-    description: "Portable MCP stdio integration profile.",
-    kind: "profile",
-  },
-  {
-    relativePath: "profiles/cursor.md",
-    description: "Cursor adaptation notes.",
-    kind: "profile",
-  },
-  {
-    relativePath: "profiles/gemini-cli.md",
-    description: "Gemini CLI adaptation notes.",
-    kind: "profile",
-  },
-  {
-    relativePath: "profiles/copilot-cli.md",
-    description: "Copilot adaptation notes.",
-    kind: "profile",
+    relativePath: "agents/react-sentinel-runtime-debugger.md",
+    description: "Specialized Claude Code agent for runtime debugging and validation.",
+    kind: "agent",
   },
 ];
 

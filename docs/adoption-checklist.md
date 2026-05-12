@@ -1,6 +1,6 @@
 # Universal adoption checklist
 
-This checklist captures the onboarding scenarios React-Sentinel must support for Sprint 15.
+This checklist captures the onboarding scenarios React-Sentinel should support across its documented environments.
 
 ## Validation scenarios
 

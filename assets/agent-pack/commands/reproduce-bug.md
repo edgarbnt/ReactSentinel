@@ -1,17 +1,22 @@
+---
+description: Reproduce a React or browser bug with React-Sentinel before proposing a fix.
+---
+
 # reproduce-bug
 
-Use this command when the agent needs a stable reproduction before proposing a fix.
+Use this command when you need a deterministic reproduction before changing code.
 
-## Checklist
+## Recommended flow
 
-1. Capture the target URL, important preconditions, and the exact user-visible failure.
-2. Decide between:
-   - **Replay** for deterministic, isolated reproduction;
-   - **Attach** only if the issue depends on authenticated or extension-backed browser state.
-3. Rebuild the bug with `navigate_replay`, `replay_interactions`, or attach-mode interaction tools.
-4. Record the first verdict from console, network, runtime status, and visible UI state.
-5. Keep the reproduction steps compact enough to replay after a code change.
+1. Start with `get_server_info` and `get_session_status`.
+2. Choose **Replay** unless the issue requires an existing logged-in tab or real browser state.
+3. Navigate to the failing page and replay the minimal steps that trigger the bug.
+4. Capture the useful signals early: console events, network events, render hotspots, hydration issues, or async timeline data.
+5. Write down the exact trigger, observed result, and expected result.
+6. End with a runtime assertion that can be reused by `validate-fix`.
 
-## Guardrail
+## Expected outcome
 
-If the bug can be explained by static code inspection alone, do not force a runtime reproduction.
+- a stable reproduction path exists;
+- the failure is backed by observable runtime evidence;
+- and follow-up validation can reuse the same scenario.

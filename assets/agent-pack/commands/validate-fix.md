@@ -1,19 +1,21 @@
+---
+description: Validate a proposed React fix with React-Sentinel assertions or replay checks.
+---
+
 # validate-fix
 
-Use this command after the bug is reproducible and the agent has a concrete fix hypothesis.
+Use this command after the bug is reproduced and you have a concrete fix hypothesis.
 
-## Validation sequence
+## Recommended flow
 
-1. Re-run the failing scenario with `validate_after_action` or `validate_scenario`.
-2. If the fix is still hypothetical, use `apply_patch_then_replay` or `apply_runtime_patch` in replay mode first.
-3. Prefer structured assertions over visual guesswork.
-4. Confirm the fix against the same console, network, DOM, and React-state signals that proved the bug.
-5. Clean up any sandbox patches after the verdict.
+1. Reuse the reproduction scenario instead of inventing a new one.
+2. Express success as `validate_after_action` or `validate_scenario` assertions.
+3. Prefer Replay for deterministic validation.
+4. Use Shadow Sandbox or runtime patch validation before editing source when one runtime hypothesis needs proof.
+5. Re-run the assertions after the change and capture pass/fail evidence.
 
 ## Expected outcome
 
-The agent should end with one of these states:
-
-- the scenario is now validated;
-- the runtime patch proves the hypothesis but source code still needs to change;
-- or the attempted fix is disproved and the investigation must continue.
+- the fix is validated against the original bug;
+- the final answer cites observed runtime evidence;
+- and regressions are less likely because the success condition is explicit.

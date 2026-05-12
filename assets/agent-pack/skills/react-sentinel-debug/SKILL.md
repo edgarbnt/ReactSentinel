@@ -1,3 +1,8 @@
+---
+name: react-sentinel-debug
+description: Use React-Sentinel when a task needs live browser or React runtime inspection rather than static code reading alone.
+---
+
 # React-Sentinel Debug Skill
 
 Use React-Sentinel only when the task benefits from **observing a live browser runtime** instead of only reading repository files.
@@ -21,9 +26,9 @@ Use React-Sentinel only when the task benefits from **observing a live browser r
 
 1. `get_server_info`
 2. `get_session_status`
-3. `debug-react`
-4. `reproduce-bug`
-5. `validate-fix`
+3. `/debug-react`
+4. `/reproduce-bug`
+5. `/validate-fix`
 
 ## Mode rules
 

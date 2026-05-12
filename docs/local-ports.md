@@ -12,7 +12,7 @@ These local URLs and ports are legitimate examples used by React-Sentinel for de
 | `http://localhost:5176/` | Validation-loop scenario example | `docs/scenarios/validation-loop.md` |
 | `http://127.0.0.1:3000` | Common fallback suggestion for Next.js-style local apps | `src/index.ts`, `src/project-detection.ts` |
 | `http://127.0.0.1:9222` | Default Chrome CDP endpoint for attach mode | `src/browser/index.ts` |
-| `http://127.0.0.1:9333` | Alternate CDP endpoint example | `docs/release-mvp.md` |
+| `http://127.0.0.1:9333` | Alternate CDP endpoint example | `src/index.ts` |
 
 ## Why these values stay in the repo
 
