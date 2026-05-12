@@ -32,7 +32,7 @@ L'agent ré-exécute le même tool `validate_after_action`.
 
 **Résultat attendu :** `pass: true`.
 
-## Variante Sprint 8 : scénario multi-étapes avec rapport
+## Variante : scénario multi-étapes avec rapport
 
 Pour valider plusieurs invariants d'un coup, l'agent peut maintenant utiliser `validate_scenario`.
 
@@ -58,7 +58,7 @@ Pour valider plusieurs invariants d'un coup, l'agent peut maintenant utiliser `v
 - un rapport Markdown lisible pour l'IA ou le développeur ;
 - `success: true` si toutes les assertions passent.
 
-## Variante Sprint 9 : patch éphémère + replay + verdict
+## Variante : patch éphémère + replay + verdict
 
 Pour tester une correction sans modifier les fichiers locaux, l'agent peut maintenant utiliser `apply_patch_then_replay`.
 
@@ -94,4 +94,4 @@ Pour tester une correction sans modifier les fichiers locaux, l'agent peut maint
 - un sandbox propre après le flux, grâce au cleanup par défaut via reset de session.
 
 ---
-*Ce scénario a été validé lors du Sprint 3 (SCRUM-15) en utilisant l'application de test intégrée.*
+*Ce scénario a été validé sur l'application de test intégrée.*

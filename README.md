@@ -100,7 +100,7 @@ React-Sentinel keeps the CLI binary name `react-sentinel`, but the public npm pa
 - [docs/agent-runtime-ux.md](docs/agent-runtime-ux.md) — trigger heuristics, mode choice, and example agent prompts
 - [docs/adoption-checklist.md](docs/adoption-checklist.md) — onboarding checklist and validation scenarios
 - [docs/local-ports.md](docs/local-ports.md) — legitimate local URLs, ports, and CDP endpoints used in docs and tests
-- [docs/public-readiness-audit.md](docs/public-readiness-audit.md) — Sprint 15 audit of public-repo cleanup decisions
+- [docs/agent-pack.md](docs/agent-pack.md) — Claude Code agent-pack layout and managed files
 - [docs/workflows.md](docs/workflows.md) — deep workflow reference for Attach, Replay, Sandbox, and MCP wiring
 - [docs/local-diagnostics-checklist.md](docs/local-diagnostics-checklist.md) — troubleshooting
 

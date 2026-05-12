@@ -1,28 +1,22 @@
 # React-Sentinel Agent Pack
 
-This pack is the local integration bundle that React-Sentinel installs for AI coding agents.
+This pack installs **Claude Code-ready project files** for React runtime debugging.
 
-## Primary target
+## Installed layout
 
-- **Primary:** Claude Code project-local integration
-- **Also included as documentation profiles:** generic MCP, Gemini CLI, Copilot
-
-## Contents
-
-- `commands/` - ready-to-reuse prompt commands for React debugging
-- `skills/` - reusable operating rules for when and how to call React-Sentinel
-- `docs/` - heuristics and compatibility notes that stay local to the project
-- `profiles/` - per-agent integration notes and limits
-- `manifest.json` - machine-readable ownership record for update and uninstall
+- `.claude/commands/` - ready-to-use slash commands
+- `.claude/skills/react-sentinel-debug/SKILL.md` - reusable runtime-debugging skill
+- `.claude/agents/` - optional specialized agent instructions
+- `.claude/docs/` - supporting heuristics and compatibility notes
+- `.claude/.react-sentinel-manifest.json` - ownership record for update and uninstall
+- `.mcp.json` - React-Sentinel MCP server entry for Claude Code
 
 ## Core commands
 
-1. `debug-react` - start with server/session status, then inspect runtime, console, network, and component state.
-2. `reproduce-bug` - build a reproducible Replay or Attach scenario before changing code.
-3. `validate-fix` - turn the bug into assertions and use validation or sandbox tools to prove the fix.
+1. `debug-react` - inspect runtime state, console, network, and React component data.
+2. `reproduce-bug` - reproduce a browser issue in Replay or Attach before editing code.
+3. `validate-fix` - convert the bug into checks and validate the fix before finishing.
 
-## Managed MCP config
+## Compatibility
 
-The pack expects React-Sentinel to manage one MCP server entry in the project config file, usually `.mcp.json` for Claude Code.
-
-The Markdown assets in this folder are intentionally client-agnostic so they can be copied or adapted outside Claude Code when needed.
+Claude Code is the primary target because the installed files follow Claude Code's native command, skill, and agent layout directly. Other MCP clients can still reuse the transport config and the markdown guidance manually.

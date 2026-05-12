@@ -1,11 +1,11 @@
 # Agent compatibility
 
-| Agent | Support level | What the pack provides | Notes |
+| Agent / client | Support level | What the pack provides | Notes |
 |---|---|---|---|
-| Claude Code | Primary | Project-local `.mcp.json`, commands, skills, heuristics, profile docs | The default install target |
-| Generic MCP client | Supported with manual wiring | Standard stdio launch command, arguments, and local docs | Client-specific config path may differ |
-| Cursor | Documented adaptation | Cursor profile notes plus the same MCP launch guidance | `.cursor/mcp.json` is a natural project-local target |
-| Gemini CLI | Documented adaptation | Prompt/skill guidance and generic MCP notes | Manual setup expected |
-| Copilot | Documented adaptation | Prompt/skill guidance and generic MCP notes | VS Code and CLI surfaces may differ |
+| Claude Code | Primary | `.claude/commands`, `.claude/skills`, `.claude/agents`, `.claude/docs`, and `.mcp.json` | Immediately usable without rewriting the markdown files |
+| Generic MCP client | Supported with manual wiring | Standard stdio launch command plus reusable guidance | Client-specific config path may differ |
+| Cursor | Documented adaptation | Reuse the same MCP launch config and markdown guidance manually | `.cursor/mcp.json` remains a natural project-local target |
+| Gemini CLI | Documented adaptation | Reuse the same MCP launch config and guidance manually | Command and prompt wiring remain client-specific |
+| GitHub Copilot / VS Code | Documented adaptation | Reuse the same MCP launch config and guidance manually | `.vscode/mcp.json` remains the main config target |
 
-The pack keeps the Markdown assets portable so the same guidance can move across clients even when their native command surfaces differ.
+The pack keeps Claude Code as the only auto-wired experience. Other clients can still reuse the same transport config and prompt guidance without changing the core React-Sentinel launch command.

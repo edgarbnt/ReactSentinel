@@ -1,3 +1,7 @@
+---
+description: Inspect a live React runtime with React-Sentinel before editing source code.
+---
+
 # debug-react
 
 Use this command when the task looks like a real browser or React runtime bug instead of a pure source-code question.
