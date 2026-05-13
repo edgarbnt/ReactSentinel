@@ -245,6 +245,9 @@ function buildServerInfoResponse(): {
   capabilities: Record<string, "planned" | "partial" | "available">;
   capabilityDetails: ReturnType<typeof createServerInfoPayload>["capabilityDetails"];
   capabilitiesByMode: ReturnType<typeof createServerInfoPayload>["capabilitiesByMode"];
+  toolSelectionGuide: ReturnType<typeof createServerInfoPayload>["toolSelectionGuide"];
+  recommendedWorkflows: ReturnType<typeof createServerInfoPayload>["recommendedWorkflows"];
+  documentation: ReturnType<typeof createServerInfoPayload>["documentation"];
 } {
   return {
     name: REACT_SENTINEL_NAME,
@@ -275,7 +278,7 @@ function createServer(): McpServer {
 
   server.tool(
     "get_server_info",
-    "Returns metadata and planned capabilities of this React-Sentinel instance.",
+    "Return the honest React-Sentinel capability map plus a tool-selection guide that tells an agent when to prefer runtime investigation over grep or static file reading.",
     {},
     async (): Promise<ToolResponse> => {
       try {

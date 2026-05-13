@@ -16,8 +16,9 @@ export function register(server: McpServer): void {
   server.tool(
     "get_network_events",
     [
-      "Returns the recent network events captured from fetch and XMLHttpRequest.",
-      "Includes a summary that highlights HTTP errors (4xx/5xx) for quick AI diagnostics.",
+      "Return the recent network events captured from fetch and XMLHttpRequest.",
+      "Use this instead of grep when the visible UI bug may actually be explained by failing, missing, duplicate, or late runtime requests.",
+      "Includes a summary that highlights HTTP errors (4xx/5xx) for quick diagnostics.",
     ].join(" "),
     {
       url: z.string().url().describe("URL of the page to inspect."),

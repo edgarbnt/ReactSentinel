@@ -14,7 +14,47 @@ export type CapabilityDefinition = {
   summary: string;
 };
 
+export type ToolSelectionGuideEntry = {
+  situation: string;
+  startWith: readonly string[];
+  why: string;
+  followUp?: readonly string[];
+};
+
 const CORE_TOOL_NAMES = ["ping", "get_server_info", "echo"] as const;
+
+const TOOL_SELECTION_GUIDE: readonly ToolSelectionGuideEntry[] = [
+  {
+    situation: "You need the fastest high-signal triage for a vague runtime bug.",
+    startWith: ["diagnose_runtime_bug"],
+    why: "Use runtime evidence instead of grep when the symptom depends on browser state, console output, hydration, async timing, or render churn.",
+    followUp: ["attribute_render", "find_memo_breaks", "get_runtime_timeline"],
+  },
+  {
+    situation: "A component rerenders too often and you need the most likely cause.",
+    startWith: ["diagnose_excess_renders", "attribute_render"],
+    why: "Use replay render signals instead of static code reading when you must prove whether props, state, context, hooks, or a parent render caused the churn.",
+    followUp: ["find_memo_breaks", "get_hook_changes", "inspect_component"],
+  },
+  {
+    situation: "You want a deterministic reproduction or invariant check for a user flow.",
+    startWith: ["validate_scenario", "find_race_conditions"],
+    why: "Use replay assertions instead of manual clicking or source inspection when the failure appears only after a sequence of actions or timing changes.",
+    followUp: ["verify_hypothesis", "verify_fix"],
+  },
+  {
+    situation: "You want to test a fix or a hypothesis before editing repository code.",
+    startWith: ["verify_hypothesis", "verify_fix", "apply_patch_then_replay"],
+    why: "Use the replay sandbox instead of editing files blindly when you need proof that a runtime patch changes the observed behavior.",
+    followUp: ["reset_runtime_patches"],
+  },
+  {
+    situation: "You need browser access before any runtime investigation can begin.",
+    startWith: ["get_session_status", "get_attach_status", "navigate_replay"],
+    why: "Use browser session tools instead of grep when the blocker is connectivity, live attach readiness, or launching an isolated replay session.",
+    followUp: ["select_attach_tab", "browser_ping"],
+  },
+];
 
 const capabilityCatalog = {
   browser_ping: {
@@ -49,9 +89,9 @@ const capabilityCatalog = {
   },
   navigate_replay: {
     status: "available",
-    tools: ["navigate_replay"],
+    tools: ["navigate_replay", "start_debug_replay"],
     modes: ["replay", "sandbox"],
-    summary: "Open the isolated replay browser on a target application URL.",
+    summary: "Open the isolated replay browser on a target application URL and start a deterministic debugging session.",
   },
   get_runtime_status: {
     status: "available",
@@ -175,9 +215,9 @@ const capabilityCatalog = {
   },
   validate_scenario: {
     status: "available",
-    tools: ["validate_scenario"],
+    tools: ["validate_scenario", "validate_user_flow"],
     modes: ["replay", "sandbox"],
-    summary: "Run multi-step validations and assertions against the replay sandbox.",
+    summary: "Run multi-step validations and assertions against the replay sandbox for a deterministic user flow verdict.",
   },
   apply_runtime_patch: {
     status: "available",
@@ -187,19 +227,19 @@ const capabilityCatalog = {
   },
   apply_patch_then_replay: {
     status: "available",
-    tools: ["apply_patch_then_replay"],
+    tools: ["apply_patch_then_replay", "patch_and_validate"],
     modes: ["sandbox"],
-    summary: "Patch, replay, and validate in one sandbox flow.",
+    summary: "Patch, replay, and validate in one sandbox flow before touching source files.",
   },
   verify_hypothesis: {
     status: "available",
-    tools: ["verify_hypothesis"],
+    tools: ["verify_hypothesis", "test_runtime_hypothesis"],
     modes: ["replay", "sandbox"],
     summary: "Confirm, refute, or partially support a runtime hypothesis before touching source code.",
   },
   verify_fix: {
     status: "available",
-    tools: ["verify_fix"],
+    tools: ["verify_fix", "verify_runtime_fix"],
     modes: ["sandbox"],
     summary: "Compare baseline versus patched replay behavior to validate a runtime fix and surface regressions.",
   },
@@ -211,7 +251,7 @@ const capabilityCatalog = {
   },
   shadow_sandbox: {
     status: "partial",
-    tools: ["apply_runtime_patch", "apply_patch_then_replay", "verify_fix", "reset_runtime_patches"],
+    tools: ["apply_runtime_patch", "apply_patch_then_replay", "patch_and_validate", "verify_fix", "verify_runtime_fix", "reset_runtime_patches"],
     modes: ["sandbox"],
     summary: "Shadow sandbox is available for script-on-page patches only; broader patch shapes are still planned.",
   },
@@ -227,6 +267,9 @@ export function createServerInfoPayload(): {
   capabilities: Record<string, CapabilityStatus>;
   capabilityDetails: Record<string, CapabilityDefinition>;
   capabilitiesByMode: Record<CapabilityMode, Record<CapabilityStatus, string[]>>;
+  toolSelectionGuide: ToolSelectionGuideEntry[];
+  recommendedWorkflows: ToolSelectionGuideEntry[];
+  documentation: string[];
 } {
   const capabilityDetails = Object.fromEntries(
     Object.entries(capabilityCatalog).map(([name, definition]) => [
@@ -266,6 +309,19 @@ export function createServerInfoPayload(): {
     capabilities,
     capabilityDetails,
     capabilitiesByMode,
+    toolSelectionGuide: TOOL_SELECTION_GUIDE.map((entry) => ({
+      situation: entry.situation,
+      startWith: [...entry.startWith],
+      why: entry.why,
+      ...(entry.followUp ? { followUp: [...entry.followUp] } : {}),
+    })),
+    recommendedWorkflows: TOOL_SELECTION_GUIDE.map((entry) => ({
+      situation: entry.situation,
+      startWith: [...entry.startWith],
+      why: entry.why,
+      ...(entry.followUp ? { followUp: [...entry.followUp] } : {}),
+    })),
+    documentation: ["docs/tool-selection-guide.md", "docs/agent-runtime-ux.md", "docs/workflows.md"],
   };
 }
 

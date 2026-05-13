@@ -339,6 +339,7 @@ export const INTERACTION_TOOL_NAMES = [
   "simulate_interaction",
   "validate_after_action",
   "validate_scenario",
+  "validate_user_flow",
   "replay_interactions",
   "find_race_conditions",
 ] as const;
@@ -350,8 +351,8 @@ export function register(server: McpServer): void {
   server.tool(
     "simulate_interaction",
     [
-      "Simulates a user interaction (click, type, or fill) on the target page.",
-      "Useful for reproducing bugs or exploring the application state after interaction.",
+      "Simulate a single user interaction on the target page.",
+      "Use this instead of reasoning from source code alone when the next UI state depends on an actual click, type, fill, or keypress in the browser.",
       "Requires a valid CSS selector and target URL.",
     ].join(" "),
     {
@@ -377,8 +378,8 @@ export function register(server: McpServer): void {
   server.tool(
     "validate_after_action",
     [
-      "Performs an interaction followed by a validation assertion in a single flow.",
-      "Useful for experimental validation: 'If I click this, does the error disappear?' or 'Does the text X appear?'.",
+      "Perform one interaction and immediately validate the resulting runtime state in a single flow.",
+      "Use this instead of manual reproduction when you need a tight pass/fail answer such as 'if I click this, does the error disappear?' or 'does text X appear?'.",
     ].join(" "),
     {
       url: z.string().url().describe("The URL of the page."),
@@ -424,6 +425,7 @@ export function register(server: McpServer): void {
     "validate_scenario",
     [
       "Replay a deterministic action sequence and evaluate multiple assertions in one pass.",
+      "Use this instead of grep or ad-hoc clicking when a bug only appears after several browser actions and you need a reproducible runtime verdict.",
       "Returns both a structured JSON report and a Markdown report with actions, assertions, and useful traces.",
     ].join(" "),
     {
@@ -460,6 +462,46 @@ export function register(server: McpServer): void {
     }
   );
 
+  server.tool(
+    "validate_user_flow",
+    [
+      "Action-oriented alias for validate_scenario that checks whether a user flow still works end-to-end.",
+      "Prefer this when the agent is thinking in terms of user journeys rather than generic scenario validation.",
+    ].join(" "),
+    {
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
+      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions to evaluate after the replayed actions."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
+      waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional().default("domcontentloaded").describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      resetSession: z.boolean().optional().default(false).describe("Close the current replay browser first and start a fresh isolated session."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+    },
+    async ({ url, steps, assertions, headless, waitUntil, timeoutMs, resetSession, continueOnError, waitMs }): Promise<ToolResponse> => {
+      try {
+        const result = await browserManager.runValidationScenario(steps, assertions, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in result) return err(result.error);
+
+        return ok({
+          report: result,
+          reportMarkdown: buildScenarioMarkdown(result),
+        });
+      } catch (e) {
+        return err(`validate_user_flow failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
   // -------------------------------------------------------------------------
   // Tool: replay_interactions — SCRUM-104
   // -------------------------------------------------------------------------
@@ -467,8 +509,8 @@ export function register(server: McpServer): void {
     "replay_interactions",
     [
       "Replay a deterministic sequence of browser actions inside the isolated replay session.",
+      "Use this instead of manual reproduction when you need React-Sentinel to execute the exact same interaction sequence every time before deeper diagnostics.",
       "Supports click, type, fill, wait, and press steps and logs the result of each step.",
-      "Provide a URL to navigate before the replay, or omit it to reuse the current replay page.",
     ].join(" "),
     {
       url: z.string().url().optional().describe("Optional URL to open in the replay browser before the sequence runs."),
@@ -501,8 +543,8 @@ export function register(server: McpServer): void {
     "find_race_conditions",
     [
       "Stress-test a replay scenario across multiple iterations with optional adversarial delays between actions.",
+      "Use this instead of guessing from code when the bug is intermittent and only appears under unlucky runtime timing.",
       "Returns pass/fail per iteration, highlights intermittent failures, and attempts to shrink the first failing sequence into a minimal reproduction.",
-      "Use assertions as invariants that define the inconsistent runtime state you want React-Sentinel to catch.",
     ].join(" "),
     {
       url: z.string().url().optional().describe("Optional URL to open in the replay browser before each iteration."),

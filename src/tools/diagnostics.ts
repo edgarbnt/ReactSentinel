@@ -71,10 +71,9 @@ export function register(server: McpServer): void {
   server.tool(
     "get_runtime_status",
     [
-      "Navigate to a URL and return a full runtime diagnostic snapshot:",
-      "page title, URL, viewport dimensions, timestamp, and React detection",
-      "(version, fiber presence, devtools hook). Returns a structured error",
-      "if the URL is unreachable.",
+      "Navigate to a URL and return a full runtime diagnostic snapshot of what React-Sentinel can observe right now.",
+      "Use this instead of reading source files when the first question is whether React is mounted, which page is actually loaded, and whether the runtime bridge is healthy.",
+      "Returns page title, URL, viewport dimensions, timestamp, React detection, and a structured error if the URL is unreachable.",
     ].join(" "),
     {
       url: z
@@ -136,10 +135,9 @@ export function register(server: McpServer): void {
   server.tool(
     "inspect_component",
     [
-      "Search the React Fiber tree for a specific component by name and extract",
-      "its details for AI inspection, including props, path in the tree,",
-      "provider or consumed contexts, children count, and a compact summary.",
-      "Use responseMode='compact' when you want a shorter payload.",
+      "Search the React Fiber tree for a specific component by name and extract its live runtime details.",
+      "Use this instead of grep when the bug depends on the actual props, context wiring, or rendered position of a component in the current browser state.",
+      "Returns props, path in the tree, provider or consumed contexts, children count, and a compact summary. Use responseMode='compact' when you want a shorter payload.",
     ].join(" "),
     {
       url: z
@@ -170,7 +168,7 @@ export function register(server: McpServer): void {
     "get_component_state",
     [
       "Inspect a specific React component and return its serializable hook state.",
-      "Useful for checking simple useState/useRef/useMemo values without reading source code.",
+      "Use this instead of guessing from hooks source when you need the live value that actually kept a button disabled, an effect armed, or a branch hidden.",
       "Use responseMode='compact' when you want a shorter payload for AI analysis.",
     ].join(" "),
     {
@@ -202,6 +200,7 @@ export function register(server: McpServer): void {
     "get_render_counts",
     [
       "Return per-component render counters collected by the replay runtime monitor.",
+      "Use this instead of static code reading when you need proof that a component is actually rerendering far more often than expected in the reproduced browser flow.",
       "Each entry includes the component name, path, render count, and first/last observation timestamps.",
     ].join(" "),
     {
@@ -235,6 +234,7 @@ export function register(server: McpServer): void {
     "get_render_hotspots",
     [
       "Diagnose likely rerender explosions and return a verdict-first summary with evidence, confidence, and next_step.",
+      "Use this instead of grep when you need runtime proof that a render storm is happening and which component path is hottest.",
       "raw_data still contains the detailed hotspot list when deeper inspection is needed.",
     ].join(" "),
     {
@@ -477,8 +477,8 @@ export function register(server: McpServer): void {
     "diagnose_excess_renders",
     [
       "High-level render investigation for replay-mode React bugs.",
+      "Use this instead of manually chaining atomic render tools when the question is 'why is this rerendering so much?' rather than 'show me raw counters'.",
       "Orchestrates runtime status, render counts, hotspots, hook changes, and component inspection to explain why a component rerenders too often.",
-      "Prefer this over manually chaining the atomic render tools when you need a verdict first.",
     ].join(" "),
     {
       url: z.string().url().describe("URL of the page to inspect."),
@@ -489,11 +489,14 @@ export function register(server: McpServer): void {
     },
     async ({ url, componentName, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
       try {
+        const startedAt = Date.now();
+        const collectionStartedAt = Date.now();
         const [runtimeStatus, renderCounts, renderHotspots] = await Promise.all([
           browserManager.getRuntimeStatus(url),
           browserManager.getRenderCounts(url, limit),
           browserManager.getRenderHotspots(url, threshold, windowMs, limit),
         ]);
+        const collectionMs = Date.now() - collectionStartedAt;
         if ("error" in runtimeStatus) return err(runtimeStatus.error);
         if ("error" in renderCounts) return err(renderCounts.error);
         if ("error" in renderHotspots) return err(renderHotspots.error);
@@ -501,26 +504,35 @@ export function register(server: McpServer): void {
         const target = componentName ?? renderHotspots.hotspots[0]?.componentName ?? undefined;
         const targetPathText =
           renderHotspots.hotspots.find((entry) => (target ? entry.componentName === target : false))?.pathText;
+        const followUpStartedAt = Date.now();
         const [hookChanges, inspection] = target
           ? await Promise.all([
               browserManager.getHookChanges(url, target, targetPathText, 50),
               browserManager.inspectComponent(url, target, "compact"),
             ])
           : [undefined, undefined];
+        const followUpMs = target ? Date.now() - followUpStartedAt : 0;
 
         if (hookChanges && "error" in hookChanges) return err(hookChanges.error);
         if (inspection && "error" in inspection) return err(inspection.error);
 
-        return ok(
-          createExcessRenderDiagnosis({
-            componentName,
-            runtimeStatus,
-            renderCounts,
-            renderHotspots,
-            ...(hookChanges ? { hookChanges } : {}),
-            ...(inspection ? { inspection } : {}),
-          })
-        );
+        const diagnosis = createExcessRenderDiagnosis({
+          componentName,
+          runtimeStatus,
+          renderCounts,
+          renderHotspots,
+          ...(hookChanges ? { hookChanges } : {}),
+          ...(inspection ? { inspection } : {}),
+        });
+
+        return ok({
+          ...diagnosis,
+          timing: {
+            totalMs: Date.now() - startedAt,
+            collectionMs,
+            followUpMs,
+          },
+        });
       } catch (e) {
         return err(`diagnose_excess_renders failed unexpectedly: ${String(e)}`);
       }
@@ -531,6 +543,7 @@ export function register(server: McpServer): void {
     "find_memo_breaks",
     [
       "High-level investigation that searches for likely React memo breaks or context cascades.",
+      "Use this instead of grep when you need runtime evidence that unstable props or provider churn are breaking memoization in the reproduced flow.",
       "Combines render hotspots, hook churn, and component inspection so the caller gets a verdict instead of raw render data.",
     ].join(" "),
     {
@@ -542,7 +555,10 @@ export function register(server: McpServer): void {
     },
     async ({ url, componentName, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
       try {
+        const startedAt = Date.now();
+        const hotspotStartedAt = Date.now();
         const renderHotspots = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
+        const hotspotMs = Date.now() - hotspotStartedAt;
         if ("error" in renderHotspots) return err(renderHotspots.error);
 
         const target =
@@ -552,24 +568,33 @@ export function register(server: McpServer): void {
           undefined;
         const targetPathText =
           renderHotspots.hotspots.find((entry) => (target ? entry.componentName === target : false))?.pathText;
+        const followUpStartedAt = Date.now();
         const [hookChanges, inspection] = target
           ? await Promise.all([
               browserManager.getHookChanges(url, target, targetPathText, 50),
               browserManager.inspectComponent(url, target, "compact"),
             ])
           : [undefined, undefined];
+        const followUpMs = target ? Date.now() - followUpStartedAt : 0;
 
         if (hookChanges && "error" in hookChanges) return err(hookChanges.error);
         if (inspection && "error" in inspection) return err(inspection.error);
 
-        return ok(
-          createMemoBreakDiagnosis({
-            componentName,
-            renderHotspots,
-            ...(hookChanges ? { hookChanges } : {}),
-            ...(inspection ? { inspection } : {}),
-          })
-        );
+        const diagnosis = createMemoBreakDiagnosis({
+          componentName,
+          renderHotspots,
+          ...(hookChanges ? { hookChanges } : {}),
+          ...(inspection ? { inspection } : {}),
+        });
+
+        return ok({
+          ...diagnosis,
+          timing: {
+            totalMs: Date.now() - startedAt,
+            hotspotMs,
+            followUpMs,
+          },
+        });
       } catch (e) {
         return err(`find_memo_breaks failed unexpectedly: ${String(e)}`);
       }
@@ -580,7 +605,8 @@ export function register(server: McpServer): void {
     "attribute_render",
     [
       "Explain why a specific React component rendered by attributing the strongest runtime cause.",
-      "Uses render hotspots, hook churn, and component inspection to surface prop diffs, state changes, context cascades, provider churn, or parent-driven renders.",
+      "Use this instead of static code inspection when you need the strongest live explanation for one render: props, state, context, provider, hooks, or parent churn.",
+      "Uses render hotspots, hook churn, and component inspection to surface the strongest cause with evidence and next steps.",
     ].join(" "),
     {
       url: z.string().url().describe("URL of the page to inspect."),
@@ -591,27 +617,55 @@ export function register(server: McpServer): void {
     },
     async ({ url, componentName, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
       try {
+        const startedAt = Date.now();
+        const hotspotStartedAt = Date.now();
         const renderHotspots = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
+        const hotspotMs = Date.now() - hotspotStartedAt;
         if ("error" in renderHotspots) return err(renderHotspots.error);
 
         const targetPathText =
           renderHotspots.hotspots.find((entry) => entry.componentName === componentName || entry.pathText.split(" > ").includes(componentName))
             ?.pathText;
+        if (!targetPathText) {
+          const diagnosis = createRenderAttributionDiagnosis({
+            componentName,
+            renderHotspots,
+          });
+
+          return ok({
+            ...diagnosis,
+            timing: {
+              totalMs: Date.now() - startedAt,
+              hotspotMs,
+              followUpMs: 0,
+            },
+          });
+        }
+
+        const followUpStartedAt = Date.now();
         const [hookChanges, inspection] = await Promise.all([
           browserManager.getHookChanges(url, componentName, targetPathText, 50),
           browserManager.inspectComponent(url, componentName, "compact"),
         ]);
+        const followUpMs = Date.now() - followUpStartedAt;
         if ("error" in hookChanges) return err(hookChanges.error);
         if ("error" in inspection) return err(inspection.error);
 
-        return ok(
-          createRenderAttributionDiagnosis({
-            componentName,
-            renderHotspots,
-            hookChanges,
-            inspection,
-          })
-        );
+        const diagnosis = createRenderAttributionDiagnosis({
+          componentName,
+          renderHotspots,
+          hookChanges,
+          inspection,
+        });
+
+        return ok({
+          ...diagnosis,
+          timing: {
+            totalMs: Date.now() - startedAt,
+            hotspotMs,
+            followUpMs,
+          },
+        });
       } catch (e) {
         return err(`attribute_render failed unexpectedly: ${String(e)}`);
       }
@@ -622,6 +676,7 @@ export function register(server: McpServer): void {
     "diagnose_runtime_bug",
     [
       "High-level entry point for vague runtime symptoms such as stale UI, random errors, hydration failures, or unexplained slowness.",
+      "Use this instead of bouncing between grep, console logs, and ad-hoc probes when you need the fastest verdict-first answer for a browser bug.",
       "Orchestrates console, hydration, async, and render diagnostics and returns the strongest verdict first.",
     ].join(" "),
     {
@@ -634,6 +689,7 @@ export function register(server: McpServer): void {
     },
     async ({ url, symptom, stateSelector, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
       try {
+        const startedAt = Date.now();
         const [runtimeStatus, consoleEvents, hydrationIssues, asyncTimeline, renderHotspots, raceCondition] = await Promise.all([
           browserManager.getRuntimeStatus(url),
           browserManager.getConsoleEvents(url),
@@ -649,17 +705,22 @@ export function register(server: McpServer): void {
         if ("error" in renderHotspots) return err(renderHotspots.error);
         if (raceCondition && "error" in raceCondition) return err(raceCondition.error);
 
-        return ok(
-          createRuntimeBugDiagnosis({
-            symptom,
-            runtimeStatus,
-            consoleEvents,
-            hydrationIssues,
-            asyncTimeline,
-            renderHotspots,
-            ...(raceCondition ? { raceCondition } : {}),
-          })
-        );
+        const diagnosis = createRuntimeBugDiagnosis({
+          symptom,
+          runtimeStatus,
+          consoleEvents,
+          hydrationIssues,
+          asyncTimeline,
+          renderHotspots,
+          ...(raceCondition ? { raceCondition } : {}),
+        });
+
+        return ok({
+          ...diagnosis,
+          timing: {
+            totalMs: Date.now() - startedAt,
+          },
+        });
       } catch (e) {
         return err(`diagnose_runtime_bug failed unexpectedly: ${String(e)}`);
       }

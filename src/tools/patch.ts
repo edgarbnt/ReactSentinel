@@ -217,9 +217,12 @@ function buildPatchMarkdown(
 export const PATCH_TOOL_NAMES = [
   "apply_runtime_patch",
   "apply_patch_then_replay",
+  "patch_and_validate",
   "reset_runtime_patches",
   "verify_hypothesis",
+  "test_runtime_hypothesis",
   "verify_fix",
+  "verify_runtime_fix",
 ] as const;
 
 export function register(server: McpServer): void {
@@ -227,8 +230,8 @@ export function register(server: McpServer): void {
     "apply_runtime_patch",
     [
       "Apply an ephemeral JavaScript patch inside the isolated replay sandbox without touching local files.",
+      "Use this instead of editing the repository when you want to test a runtime idea safely before committing to a source change.",
       "Only { type: 'script', target: 'page' } payloads are currently supported and always scoped to the current replay session.",
-      "Provide a URL when the patch must be present before the application boots in the sandbox.",
     ].join(" "),
     {
       patch: runtimePatchSchema.describe("Runtime patch payload for the replay sandbox."),
@@ -258,8 +261,8 @@ export function register(server: McpServer): void {
     "apply_patch_then_replay",
     [
       "Apply an ephemeral replay patch, run replay steps, then evaluate assertions in the patched sandbox.",
-      "Returns an explicit patch_validated / patch_failed verdict plus a readable Markdown report.",
-      "Cleanup defaults to reset_session so temporary patches do not leak into later sandbox runs.",
+      "Use this instead of editing files blindly when you want one tool to patch, reproduce, and judge whether the runtime behavior improved.",
+      "Returns an explicit patch_validated / patch_failed verdict plus a readable Markdown report, and cleanup defaults to reset_session so temporary patches do not leak into later runs.",
     ].join(" "),
     {
       patch: runtimePatchSchema.describe("Runtime patch payload for the replay sandbox."),
@@ -351,6 +354,88 @@ export function register(server: McpServer): void {
   );
 
   server.tool(
+    "patch_and_validate",
+    [
+      "Action-oriented alias for apply_patch_then_replay that tests a runtime patch against a concrete replay protocol.",
+      "Prefer this when the agent is thinking 'try this patch and tell me if the bug is gone'.",
+    ].join(" "),
+    {
+      patch: runtimePatchSchema.describe("Runtime patch payload for the replay sandbox."),
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser after the init script is registered."),
+      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute after the patch is active."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions to evaluate after the replayed actions."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
+      waitUntil: replayWaitUntilSchema.describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      resetSession: z.boolean().optional().default(false).describe("Close the current replay sandbox first and start from a clean browser session."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+      cleanup: z.enum(["keep", "reload", "reset_session"]).optional().default("reset_session").describe("How to clean the replay sandbox after the patched validation flow."),
+      reopenUrl: z.string().url().optional().describe("Optional clean URL to reopen after cleanup when using reload or reset_session."),
+    },
+    async ({ patch, url, steps, assertions, headless, waitUntil, timeoutMs, resetSession, continueOnError, waitMs, cleanup, reopenUrl }): Promise<ToolResponse> => {
+      try {
+        const applyResult = await browserManager.applyRuntimePatch(patch as RuntimePatch, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession,
+        });
+        if ("error" in applyResult) return err(applyResult.error);
+
+        const report = await browserManager.runValidationScenario(steps, assertions as Assertion[], {
+          headless,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in report) {
+          if (cleanup !== "keep") {
+            const cleanupResult = await browserManager.resetRuntimePatches({
+              strategy: cleanup as "reload" | "reset_session",
+              waitUntil,
+              timeoutMs,
+              headless,
+              reopenUrl,
+            });
+            if ("error" in cleanupResult) {
+              return err(
+                `${report.error} Cleanup after validation failure also failed: ${cleanupResult.error}. Runtime patches may still be active.`
+              );
+            }
+          }
+          return err(report.error);
+        }
+
+        const response: PatchedValidationScenarioResponse = {
+          verdict: report.success ? "patch_validated" : "patch_failed",
+          apply: applyResult,
+          report,
+        };
+
+        if (cleanup !== "keep") {
+          const cleanupResult = await browserManager.resetRuntimePatches({
+            strategy: cleanup as "reload" | "reset_session",
+            waitUntil,
+            timeoutMs,
+            headless,
+            reopenUrl,
+          });
+          if ("error" in cleanupResult) return err(cleanupResult.error);
+          response.cleanup = cleanupResult;
+        }
+
+        return ok({
+          ...response,
+          reportMarkdown: buildPatchMarkdown(response.verdict, response.apply, response.report, response.cleanup),
+        });
+      } catch (error) {
+        return err(`patch_and_validate failed unexpectedly: ${String(error)}`);
+      }
+    }
+  );
+
+  server.tool(
     "reset_runtime_patches",
     [
       "Remove active runtime patches from the replay sandbox and return to a clean page or session.",
@@ -383,8 +468,8 @@ export function register(server: McpServer): void {
     "verify_hypothesis",
     [
       "Verify a runtime hypothesis before changing repository code.",
+      "Use this instead of arguing from source code alone when you need browser evidence that a suspected runtime cause is true, false, or only partly supported.",
       "Runs a replay protocol plus assertions and returns CONFIRMED, REFUTED, or PARTIAL with evidence and a Markdown report.",
-      "Typical examples: stale search results overwrite newer intent, a hydration mismatch appears on first load, or a spinner never settles after a failed request.",
     ].join(" "),
     {
       hypothesis: z.string().min(3).max(500).describe("Hypothesis to validate against runtime behavior."),
@@ -426,9 +511,55 @@ export function register(server: McpServer): void {
   );
 
   server.tool(
+    "test_runtime_hypothesis",
+    [
+      "Action-oriented alias for verify_hypothesis that tests whether a suspected runtime explanation matches observed browser behavior.",
+      "Prefer this when the agent is phrasing the task as 'test this hypothesis in the browser'.",
+    ].join(" "),
+    {
+      hypothesis: z.string().min(3).max(500).describe("Hypothesis to validate against runtime behavior."),
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before verification."),
+      steps: z.array(replayStepSchema).min(1).describe("Replay protocol used to test the hypothesis."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions that should hold if the hypothesis is correct."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this verification."),
+      waitUntil: replayWaitUntilSchema.describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+    },
+    async ({ hypothesis, url, steps, assertions, headless, waitUntil, timeoutMs, continueOnError, waitMs }): Promise<ToolResponse> => {
+      try {
+        const report = await browserManager.runValidationScenario(steps, assertions as Assertion[], {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: true,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in report) return err(report.error);
+
+        const response = createHypothesisVerdict({
+          hypothesis,
+          report,
+        });
+
+        return ok({
+          ...response,
+          reportMarkdown: buildHypothesisMarkdown(hypothesis, response.verdict, report),
+        });
+      } catch (error) {
+        return err(`test_runtime_hypothesis failed unexpectedly: ${String(error)}`);
+      }
+    }
+  );
+
+  server.tool(
     "verify_fix",
     [
       "Validate a runtime patch against a failing scenario before editing source files.",
+      "Use this instead of making a speculative code change when you want proof that a candidate fix improves the browser behavior and does not obviously regress other assertions.",
       "Runs a baseline scenario, applies the patch in the replay sandbox, reruns the scenario, checks optional regression assertions, and returns CONFIRMED, REFUTED, or PARTIAL.",
     ].join(" "),
     {
@@ -541,6 +672,106 @@ export function register(server: McpServer): void {
         });
       } catch (error) {
         return err(`verify_fix failed unexpectedly: ${String(error)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "verify_runtime_fix",
+    [
+      "Action-oriented alias for verify_fix that checks whether a candidate runtime fix actually resolves the bug.",
+      "Prefer this when the agent is phrasing the task as 'verify the fix before touching source'.",
+    ].join(" "),
+    {
+      fixDescription: z.string().min(3).max(500).describe("Short description of the fix that the runtime patch is supposed to validate."),
+      patch: runtimePatchSchema.describe("Runtime patch payload for the replay sandbox."),
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
+      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions that should pass after the fix is applied."),
+      regressionAssertions: z.array(assertionSchema).optional().default([]).describe("Optional guard assertions that should remain true before and after the patch."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this verification."),
+      waitUntil: replayWaitUntilSchema.describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+      cleanup: z.enum(["keep", "reload", "reset_session"]).optional().default("reset_session").describe("How to clean the replay sandbox after patch verification."),
+      reopenUrl: z.string().url().optional().describe("Optional clean URL to reopen after cleanup when using reload or reset_session."),
+    },
+    async ({ fixDescription, patch, url, steps, assertions, regressionAssertions, headless, waitUntil, timeoutMs, continueOnError, waitMs, cleanup, reopenUrl }): Promise<ToolResponse> => {
+      try {
+        const combinedAssertions = [...(assertions as Assertion[]), ...(regressionAssertions as Assertion[])];
+        const baseline = await browserManager.runValidationScenario(steps, combinedAssertions, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: true,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in baseline) return err(baseline.error);
+
+        const applyResult = await browserManager.applyRuntimePatch(patch as RuntimePatch, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: true,
+        });
+        if ("error" in applyResult) return err(applyResult.error);
+
+        const patchedReport = await browserManager.runValidationScenario(steps, combinedAssertions, {
+          headless,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in patchedReport) {
+          if (cleanup !== "keep") {
+            const cleanupResult = await browserManager.resetRuntimePatches({
+              strategy: cleanup as "reload" | "reset_session",
+              waitUntil,
+              timeoutMs,
+              headless,
+              reopenUrl,
+            });
+            if ("error" in cleanupResult) {
+              return err(`${patchedReport.error} Cleanup after patch verification also failed: ${cleanupResult.error}.`);
+            }
+          }
+          return err(patchedReport.error);
+        }
+
+        const patched: PatchedValidationScenarioResponse = {
+          verdict: patchedReport.success ? "patch_validated" : "patch_failed",
+          apply: applyResult,
+          report: patchedReport,
+        };
+
+        if (cleanup !== "keep") {
+          const cleanupResult = await browserManager.resetRuntimePatches({
+            strategy: cleanup as "reload" | "reset_session",
+            waitUntil,
+            timeoutMs,
+            headless,
+            reopenUrl,
+          });
+          if ("error" in cleanupResult) return err(cleanupResult.error);
+          patched.cleanup = cleanupResult;
+        }
+
+        const response = createFixVerdict({
+          fixDescription,
+          baseline,
+          patched,
+          regressionAssertions: regressionAssertions as Assertion[],
+        });
+
+        return ok({
+          ...response,
+          reportMarkdown: buildFixVerificationMarkdown(fixDescription, response.verdict, baseline, patched, regressionAssertions as Assertion[]),
+        });
+      } catch (error) {
+        return err(`verify_runtime_fix failed unexpectedly: ${String(error)}`);
       }
     }
   );
