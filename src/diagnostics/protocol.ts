@@ -20,6 +20,35 @@ export interface ReactInfo {
 }
 
 // ---------------------------------------------------------------------------
+// Verdict-first diagnostics (Sprint 16)
+// ---------------------------------------------------------------------------
+
+export type DiagnosticConfidence = "low" | "medium" | "high";
+
+/**
+ * Standard verdict-first diagnostic response returned by higher-signal MCP tools.
+ *
+ * The goal is to lead with an actionable diagnosis while still preserving the
+ * original raw payload under raw_data for deeper inspection when needed.
+ */
+export interface DiagnosticVerdict<TVerdict extends string = string, TRawData = unknown> {
+  /** Machine-readable diagnostic verdict chosen by the tool. */
+  verdict: TVerdict;
+  /** Short actionable summary intended to be consumed before raw data. */
+  summary: string;
+  /** Concrete observations that justify the verdict. */
+  evidence: string[];
+  /** Confidence level of the diagnostic interpretation. */
+  confidence: DiagnosticConfidence;
+  /** Optional likely source or dominant cause behind the issue. */
+  suspected_source?: string;
+  /** Optional recommended next runtime step for the caller. */
+  next_step?: string;
+  /** Original structured payload preserved for deeper investigation. */
+  raw_data?: TRawData;
+}
+
+// ---------------------------------------------------------------------------
 // Runtime status (get_runtime_status)
 // ---------------------------------------------------------------------------
 

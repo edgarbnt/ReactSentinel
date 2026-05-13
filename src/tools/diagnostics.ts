@@ -9,6 +9,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { browserManager } from "../browser/index.js";
 import type { InspectionResponseMode } from "../diagnostics/protocol.js";
+import {
+  createAsyncTimelineVerdict,
+  createHydrationIssuesVerdict,
+  createRaceConditionVerdict,
+  createRenderHotspotsVerdict,
+} from "../diagnostics/verdict.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
@@ -202,8 +208,8 @@ export function register(server: McpServer): void {
   server.tool(
     "get_render_hotspots",
     [
-      "List components that rendered too many times in a short window.",
-      "Use the threshold and window to detect likely render explosions and get a probable-cause hint.",
+      "Diagnose likely rerender explosions and return a verdict-first summary with evidence, confidence, and next_step.",
+      "raw_data still contains the detailed hotspot list when deeper inspection is needed.",
     ].join(" "),
     {
       url: z
@@ -236,7 +242,7 @@ export function register(server: McpServer): void {
       try {
         const result = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
         if ("error" in result) return err(result.error);
-        return ok(result);
+        return ok(createRenderHotspotsVerdict(result));
       } catch (e) {
         return err(`get_render_hotspots failed unexpectedly: ${String(e)}`);
       }
@@ -291,8 +297,8 @@ export function register(server: McpServer): void {
   server.tool(
     "get_race_condition_diagnosis",
     [
-      "Explain a likely UI race condition by comparing the final visible state with the recent async timeline.",
-      "Useful when a stale response may have overwritten a newer user intent.",
+      "Diagnose whether a stale async response likely overwrote newer UI intent.",
+      "Returns a verdict-first response with evidence, confidence, and next_step plus raw_data for the full trace.",
     ].join(" "),
     {
       url: z
@@ -315,7 +321,7 @@ export function register(server: McpServer): void {
       try {
         const result = await browserManager.getRaceConditionDiagnosis(url, stateSelector, limit);
         if ("error" in result) return err(result.error);
-        return ok(result);
+        return ok(createRaceConditionVerdict(result));
       } catch (e) {
         return err(`get_race_condition_diagnosis failed unexpectedly: ${String(e)}`);
       }
@@ -328,8 +334,8 @@ export function register(server: McpServer): void {
   server.tool(
     "get_async_timeline",
     [
-      "Return an async timeline derived from the captured fetch/XHR lifecycle.",
-      "Useful for spotting concurrent requests, slow operations, and completion order inversions.",
+      "Diagnose async request ordering and latency patterns from captured fetch/XHR activity.",
+      "Returns a verdict-first summary while preserving the full timeline in raw_data.",
     ].join(" "),
     {
       url: z
@@ -348,7 +354,7 @@ export function register(server: McpServer): void {
       try {
         const result = await browserManager.getAsyncTimeline(url, limit);
         if ("error" in result) return err(result.error);
-        return ok(result);
+        return ok(createAsyncTimelineVerdict(result));
       } catch (e) {
         return err(`get_async_timeline failed unexpectedly: ${String(e)}`);
       }
@@ -361,8 +367,8 @@ export function register(server: McpServer): void {
   server.tool(
     "get_hydration_issues",
     [
-      "Return normalized hydration-related warnings and exceptions captured from the runtime console.",
-      "Each entry is tagged as hydration and classified to help separate SSR/client mismatch issues from other failures.",
+      "Diagnose server/client hydration failures from runtime console signals and return a verdict-first summary.",
+      "raw_data preserves the normalized hydration entries for detailed inspection.",
     ].join(" "),
     {
       url: z
@@ -381,7 +387,7 @@ export function register(server: McpServer): void {
       try {
         const result = await browserManager.getHydrationIssues(url, limit);
         if ("error" in result) return err(result.error);
-        return ok(result);
+        return ok(createHydrationIssuesVerdict(result));
       } catch (e) {
         return err(`get_hydration_issues failed unexpectedly: ${String(e)}`);
       }
