@@ -95,6 +95,24 @@ const capabilityCatalog = {
     modes: ["replay"],
     summary: "Flag render explosions in replay mode.",
   },
+  diagnose_excess_renders: {
+    status: "available",
+    tools: ["diagnose_excess_renders"],
+    modes: ["replay"],
+    summary: "High-level replay investigation for excess renders, render loops, and context churn.",
+  },
+  find_memo_breaks: {
+    status: "available",
+    tools: ["find_memo_breaks"],
+    modes: ["replay"],
+    summary: "High-level replay investigation for memo breaks versus context cascades.",
+  },
+  diagnose_runtime_bug: {
+    status: "available",
+    tools: ["diagnose_runtime_bug"],
+    modes: ["replay"],
+    summary: "Verdict-first runtime bug triage for vague symptoms before drilling into atomic tools.",
+  },
   get_hook_changes: {
     status: "available",
     tools: ["get_hook_changes"],
@@ -124,6 +142,12 @@ const capabilityCatalog = {
     tools: ["get_render_counts", "get_render_hotspots", "get_hook_changes"],
     modes: ["replay"],
     summary: "Replay-mode render monitor for loops and unstable hooks.",
+  },
+  investigation_tools: {
+    status: "available",
+    tools: ["diagnose_excess_renders", "find_memo_breaks", "diagnose_runtime_bug"],
+    modes: ["replay"],
+    summary: "Prefer these verdict-first investigations before chaining the lower-level atomic diagnostics yourself.",
   },
   replay_sandbox: {
     status: "available",

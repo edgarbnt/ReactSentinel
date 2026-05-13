@@ -8,6 +8,11 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { browserManager } from "../browser/index.js";
+import {
+  createExcessRenderDiagnosis,
+  createMemoBreakDiagnosis,
+  createRuntimeBugDiagnosis,
+} from "../diagnostics/investigation.js";
 import type { InspectionResponseMode } from "../diagnostics/protocol.js";
 import {
   createAsyncTimelineVerdict,
@@ -23,6 +28,22 @@ const inspectionResponseModeSchema = z
   .default("full")
   .describe("Choose 'compact' to aggressively trim long inspection payloads for AI consumption.");
 
+const hotspotThresholdSchema = z
+  .number()
+  .int()
+  .min(1)
+  .max(100)
+  .optional()
+  .describe("Minimum renders inside the observation window before a component is treated as suspicious. Default is 8.");
+
+const hotspotWindowSchema = z
+  .number()
+  .int()
+  .min(100)
+  .max(30_000)
+  .optional()
+  .describe("Observation window in milliseconds used to detect rapid rerenders. Default is 1000ms.");
+
 export const DIAGNOSTIC_TOOL_NAMES = [
   "get_runtime_status",
   "get_react_tree",
@@ -36,6 +57,9 @@ export const DIAGNOSTIC_TOOL_NAMES = [
   "get_hydration_issues",
   "get_console_events",
   "get_runtime_timeline",
+  "diagnose_excess_renders",
+  "find_memo_breaks",
+  "diagnose_runtime_bug",
 ] as const;
 
 export function register(server: McpServer): void {
@@ -443,6 +467,157 @@ export function register(server: McpServer): void {
         return ok(result);
       } catch (e) {
         return err(`get_runtime_timeline failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "diagnose_excess_renders",
+    [
+      "High-level render investigation for replay-mode React bugs.",
+      "Orchestrates runtime status, render counts, hotspots, hook changes, and component inspection to explain why a component rerenders too often.",
+      "Prefer this over manually chaining the atomic render tools when you need a verdict first.",
+    ].join(" "),
+    {
+      url: z.string().url().describe("URL of the page to inspect."),
+      componentName: z.string().min(1).optional().describe("Optional component to focus on. When omitted, React-Sentinel diagnoses the top hotspot."),
+      threshold: hotspotThresholdSchema,
+      windowMs: hotspotWindowSchema,
+      limit: z.number().int().min(1).max(100).optional().describe("Maximum number of render counters and hotspots to inspect. Default is 20."),
+    },
+    async ({ url, componentName, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
+      try {
+        const [runtimeStatus, renderCounts, renderHotspots] = await Promise.all([
+          browserManager.getRuntimeStatus(url),
+          browserManager.getRenderCounts(url, limit),
+          browserManager.getRenderHotspots(url, threshold, windowMs, limit),
+        ]);
+        if ("error" in runtimeStatus) return err(runtimeStatus.error);
+        if ("error" in renderCounts) return err(renderCounts.error);
+        if ("error" in renderHotspots) return err(renderHotspots.error);
+
+        const target = componentName ?? renderHotspots.hotspots[0]?.componentName ?? undefined;
+        const targetPathText =
+          renderHotspots.hotspots.find((entry) => (target ? entry.componentName === target : false))?.pathText;
+        const [hookChanges, inspection] = target
+          ? await Promise.all([
+              browserManager.getHookChanges(url, target, targetPathText, 50),
+              browserManager.inspectComponent(url, target, "compact"),
+            ])
+          : [undefined, undefined];
+
+        if (hookChanges && "error" in hookChanges) return err(hookChanges.error);
+        if (inspection && "error" in inspection) return err(inspection.error);
+
+        return ok(
+          createExcessRenderDiagnosis({
+            componentName,
+            runtimeStatus,
+            renderCounts,
+            renderHotspots,
+            ...(hookChanges ? { hookChanges } : {}),
+            ...(inspection ? { inspection } : {}),
+          })
+        );
+      } catch (e) {
+        return err(`diagnose_excess_renders failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "find_memo_breaks",
+    [
+      "High-level investigation that searches for likely React memo breaks or context cascades.",
+      "Combines render hotspots, hook churn, and component inspection so the caller gets a verdict instead of raw render data.",
+    ].join(" "),
+    {
+      url: z.string().url().describe("URL of the page to inspect."),
+      componentName: z.string().min(1).optional().describe("Optional component to inspect directly. When omitted, React-Sentinel picks the strongest hotspot candidate."),
+      threshold: hotspotThresholdSchema,
+      windowMs: hotspotWindowSchema,
+      limit: z.number().int().min(1).max(100).optional().describe("Maximum number of hotspots to inspect. Default is 20."),
+    },
+    async ({ url, componentName, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
+      try {
+        const renderHotspots = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
+        if ("error" in renderHotspots) return err(renderHotspots.error);
+
+        const target =
+          componentName ??
+          renderHotspots.hotspots.find((entry) => entry.probableCause.type === "unstable_props")?.componentName ??
+          renderHotspots.hotspots[0]?.componentName ??
+          undefined;
+        const targetPathText =
+          renderHotspots.hotspots.find((entry) => (target ? entry.componentName === target : false))?.pathText;
+        const [hookChanges, inspection] = target
+          ? await Promise.all([
+              browserManager.getHookChanges(url, target, targetPathText, 50),
+              browserManager.inspectComponent(url, target, "compact"),
+            ])
+          : [undefined, undefined];
+
+        if (hookChanges && "error" in hookChanges) return err(hookChanges.error);
+        if (inspection && "error" in inspection) return err(inspection.error);
+
+        return ok(
+          createMemoBreakDiagnosis({
+            componentName,
+            renderHotspots,
+            ...(hookChanges ? { hookChanges } : {}),
+            ...(inspection ? { inspection } : {}),
+          })
+        );
+      } catch (e) {
+        return err(`find_memo_breaks failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "diagnose_runtime_bug",
+    [
+      "High-level entry point for vague runtime symptoms such as stale UI, random errors, hydration failures, or unexplained slowness.",
+      "Orchestrates console, hydration, async, and render diagnostics and returns the strongest verdict first.",
+    ].join(" "),
+    {
+      url: z.string().url().describe("URL of the page to inspect."),
+      symptom: z.string().min(3).max(200).describe("Short natural-language description of the runtime symptom to bias the diagnosis."),
+      stateSelector: z.string().min(1).optional().describe("Optional CSS selector that exposes the final visible state when race conditions are suspected."),
+      threshold: hotspotThresholdSchema,
+      windowMs: hotspotWindowSchema,
+      limit: z.number().int().min(1).max(100).optional().describe("Maximum number of async and render events to inspect. Default is 20."),
+    },
+    async ({ url, symptom, stateSelector, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
+      try {
+        const [runtimeStatus, consoleEvents, hydrationIssues, asyncTimeline, renderHotspots, raceCondition] = await Promise.all([
+          browserManager.getRuntimeStatus(url),
+          browserManager.getConsoleEvents(url),
+          browserManager.getHydrationIssues(url, limit),
+          browserManager.getAsyncTimeline(url, limit),
+          browserManager.getRenderHotspots(url, threshold, windowMs, limit),
+          stateSelector ? browserManager.getRaceConditionDiagnosis(url, stateSelector, limit) : Promise.resolve(undefined),
+        ]);
+        if ("error" in runtimeStatus) return err(runtimeStatus.error);
+        if ("error" in consoleEvents) return err(consoleEvents.error);
+        if ("error" in hydrationIssues) return err(hydrationIssues.error);
+        if ("error" in asyncTimeline) return err(asyncTimeline.error);
+        if ("error" in renderHotspots) return err(renderHotspots.error);
+        if (raceCondition && "error" in raceCondition) return err(raceCondition.error);
+
+        return ok(
+          createRuntimeBugDiagnosis({
+            symptom,
+            runtimeStatus,
+            consoleEvents,
+            hydrationIssues,
+            asyncTimeline,
+            renderHotspots,
+            ...(raceCondition ? { raceCondition } : {}),
+          })
+        );
+      } catch (e) {
+        return err(`diagnose_runtime_bug failed unexpectedly: ${String(e)}`);
       }
     }
   );
