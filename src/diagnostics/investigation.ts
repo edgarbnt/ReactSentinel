@@ -56,6 +56,17 @@ type RuntimeBugRawData = {
   render_hotspots: RenderHotspotsResponse;
 };
 
+type RenderAttributionVerdict =
+  | "render_attributed"
+  | "render_attribution_inconclusive"
+  | "component_not_found";
+
+type RenderAttributionRawData = {
+  render_hotspots: RenderHotspotsResponse;
+  hook_changes?: HookChangesResponse;
+  component_inspection?: ComponentInspectionResponse;
+};
+
 function matchesComponent(componentName: string, candidateName: string, pathText: string): boolean {
   return candidateName === componentName || pathText.split(" > ").includes(componentName);
 }
@@ -128,7 +139,7 @@ export function createExcessRenderDiagnosis(seed: {
     ...buildContextEvidence(seed.inspection),
   ];
 
-  if (hotspot.probableCause.type === "unstable_props") {
+  if (hotspot.probableCause.type === "provider_value_recreated" || hotspot.probableCause.type === "context_change") {
     if (contexts.length > 0) {
       return createDiagnosis({
         verdict: "context_cascade_suspected",
@@ -140,7 +151,9 @@ export function createExcessRenderDiagnosis(seed: {
         raw_data,
       });
     }
+  }
 
+  if (hotspot.probableCause.type === "prop_diff") {
     return createDiagnosis({
       verdict: "memo_break_suspected",
       summary: `${hotspot.componentName} is rerendering with unstable props, which strongly suggests a memo break upstream.`,
@@ -152,7 +165,7 @@ export function createExcessRenderDiagnosis(seed: {
     });
   }
 
-  if (hotspot.probableCause.type === "unstable_state") {
+  if (hotspot.probableCause.type === "state_change") {
     return createDiagnosis({
       verdict: "render_loop_detected",
       summary: `${hotspot.componentName} appears stuck in a state-driven render loop.`,
@@ -164,7 +177,7 @@ export function createExcessRenderDiagnosis(seed: {
     });
   }
 
-  if (hotspot.probableCause.type === "unstable_hook_value") {
+  if (hotspot.probableCause.type === "hook_instability") {
     return createDiagnosis({
       verdict: "hook_instability_detected",
       summary: `${hotspot.componentName} is rerendering because one hook value keeps changing across renders.`,
@@ -197,7 +210,7 @@ export function createMemoBreakDiagnosis(seed: {
     seed.componentName ? matchesComponent(seed.componentName, entry.componentName, entry.pathText) : true
   );
   const target =
-    hotspotCandidates.find((entry) => entry.probableCause.type === "unstable_props") ??
+    hotspotCandidates.find((entry) => entry.probableCause.type === "prop_diff") ??
     hotspotCandidates[0] ??
     null;
   const contexts = seed.inspection?.component?.contexts ?? [];
@@ -225,7 +238,7 @@ export function createMemoBreakDiagnosis(seed: {
     ...buildContextEvidence(seed.inspection),
   ];
 
-  if (target.probableCause.type === "unstable_props" && contexts.length === 0) {
+  if (target.probableCause.type === "prop_diff" && contexts.length === 0) {
     return createDiagnosis({
       verdict: "memo_break_suspected",
       summary: `${target.componentName} rerenders with changing props and no dominant local hook churn, which is consistent with a memo break.`,
@@ -237,7 +250,11 @@ export function createMemoBreakDiagnosis(seed: {
     });
   }
 
-  if (contexts.length > 0) {
+  if (
+    contexts.length > 0 ||
+    target.probableCause.type === "context_change" ||
+    target.probableCause.type === "provider_value_recreated"
+  ) {
     return createDiagnosis({
       verdict: "context_cascade_suspected",
       summary: `${target.componentName} looks more affected by context/provider churn than by a classic memo break.`,
@@ -249,7 +266,7 @@ export function createMemoBreakDiagnosis(seed: {
     });
   }
 
-  if ((seed.hookChanges?.summary.suspiciousHooks[0]?.suspected ?? false) || target.probableCause.type === "unstable_state") {
+  if ((seed.hookChanges?.summary.suspiciousHooks[0]?.suspected ?? false) || target.probableCause.type === "state_change") {
     return createDiagnosis({
       verdict: "internal_state_instability_detected",
       summary: `${target.componentName} is rerendering because its own hook or state values keep changing, so the issue is not primarily a memo break.`,
@@ -268,6 +285,78 @@ export function createMemoBreakDiagnosis(seed: {
     confidence: "medium",
     suspected_source: target.pathText,
     next_step: "Collect a longer replay trace or inspect the component's parent chain to confirm whether prop identity churn is real.",
+    raw_data,
+  });
+}
+
+export function createRenderAttributionDiagnosis(seed: {
+  componentName: string;
+  renderHotspots: RenderHotspotsResponse;
+  hookChanges?: HookChangesResponse;
+  inspection?: ComponentInspectionResponse;
+}): DiagnosticVerdict<RenderAttributionVerdict, RenderAttributionRawData> {
+  const target =
+    seed.renderHotspots.hotspots.find((entry) => matchesComponent(seed.componentName, entry.componentName, entry.pathText)) ??
+    null;
+  const raw_data: RenderAttributionRawData = {
+    render_hotspots: seed.renderHotspots,
+    ...(seed.hookChanges ? { hook_changes: seed.hookChanges } : {}),
+    ...(seed.inspection ? { component_inspection: seed.inspection } : {}),
+  };
+
+  if (!target) {
+    return createDiagnosis({
+      verdict: "component_not_found",
+      summary: `React-Sentinel did not capture a recent hotspot for ${seed.componentName}, so render attribution is not decisive yet.`,
+      evidence: [`Detected hotspots: ${seed.renderHotspots.hotspots.length}`],
+      confidence: "low",
+      next_step: "Replay the scenario immediately before attributing the render, or lower the hotspot threshold for this component.",
+      raw_data,
+    });
+  }
+
+  const cause = target.probableCause;
+  const contexts = seed.inspection?.component?.contexts ?? [];
+  const hookLead = seed.hookChanges?.summary.suspiciousHooks[0] ?? null;
+  const evidence = [
+    `Component path: ${target.pathText}`,
+    `Primary cause: ${cause.summary}`,
+    ...(hookLead ? [`Dominant hook: #${hookLead.hookIndex} (${hookLead.hookKind}) changed ${hookLead.changeCount} times`] : []),
+    ...(contexts.length > 0 ? [`Observed contexts/providers: ${contexts.map((context) => context.name).join(", ")}`] : []),
+  ];
+
+  const summaryByCause: Record<string, string> = {
+    prop_diff: `${target.componentName} most likely rerendered because one or more props changed.`,
+    state_change: `${target.componentName} most likely rerendered because its own state changed.`,
+    context_change: `${target.componentName} most likely rerendered because a consumed context value changed.`,
+    provider_value_recreated: `${target.componentName} most likely rerendered because an upstream provider recreated its value.`,
+    hook_instability: `${target.componentName} most likely rerendered because a hook value stayed unstable across renders.`,
+    parent_render: `${target.componentName} most likely rerendered because its parent rerendered without strong local diffs.`,
+    unknown: `${target.componentName} rerendered, but the dominant cause remains inconclusive.`,
+  };
+
+  const nextStepByCause: Record<string, string> = {
+    prop_diff: "Inspect the parent props passed into this component and stabilize recreated references.",
+    state_change: "Inspect the state update path or effect chain that keeps changing local state.",
+    context_change: "Inspect the consumed context source and narrow or memoize the context payload.",
+    provider_value_recreated: "Inspect the nearest provider and memoize the provided value object.",
+    hook_instability: "Inspect the unstable hook output and memoize or debounce the changing value.",
+    parent_render: "Inspect the parent component to understand what keeps it rerendering.",
+    unknown: "Collect a longer replay trace and compare props, hooks, and context churn together.",
+  };
+
+  return createDiagnosis({
+    verdict: cause.type === "unknown" ? "render_attribution_inconclusive" : "render_attributed",
+    summary: summaryByCause[cause.type] ?? summaryByCause.unknown,
+    evidence,
+    confidence: cause.type === "unknown" ? "medium" : "high",
+    suspected_source:
+      cause.type === "hook_instability"
+        ? hookLead
+          ? `hook #${hookLead.hookIndex}`
+          : target.pathText
+        : contexts[0]?.name ?? target.pathText,
+    next_step: nextStepByCause[cause.type] ?? nextStepByCause.unknown,
     raw_data,
   });
 }

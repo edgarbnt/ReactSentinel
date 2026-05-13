@@ -11,6 +11,7 @@ import { browserManager } from "../browser/index.js";
 import {
   createExcessRenderDiagnosis,
   createMemoBreakDiagnosis,
+  createRenderAttributionDiagnosis,
   createRuntimeBugDiagnosis,
 } from "../diagnostics/investigation.js";
 import type { InspectionResponseMode } from "../diagnostics/protocol.js";
@@ -60,6 +61,7 @@ export const DIAGNOSTIC_TOOL_NAMES = [
   "diagnose_excess_renders",
   "find_memo_breaks",
   "diagnose_runtime_bug",
+  "attribute_render",
 ] as const;
 
 export function register(server: McpServer): void {
@@ -545,7 +547,7 @@ export function register(server: McpServer): void {
 
         const target =
           componentName ??
-          renderHotspots.hotspots.find((entry) => entry.probableCause.type === "unstable_props")?.componentName ??
+          renderHotspots.hotspots.find((entry) => entry.probableCause.type === "prop_diff")?.componentName ??
           renderHotspots.hotspots[0]?.componentName ??
           undefined;
         const targetPathText =
@@ -570,6 +572,48 @@ export function register(server: McpServer): void {
         );
       } catch (e) {
         return err(`find_memo_breaks failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "attribute_render",
+    [
+      "Explain why a specific React component rendered by attributing the strongest runtime cause.",
+      "Uses render hotspots, hook churn, and component inspection to surface prop diffs, state changes, context cascades, provider churn, or parent-driven renders.",
+    ].join(" "),
+    {
+      url: z.string().url().describe("URL of the page to inspect."),
+      componentName: z.string().min(1).describe("React component name to attribute."),
+      threshold: hotspotThresholdSchema,
+      windowMs: hotspotWindowSchema,
+      limit: z.number().int().min(1).max(100).optional().describe("Maximum number of hotspots to inspect. Default is 20."),
+    },
+    async ({ url, componentName, threshold = 8, windowMs = 1000, limit = 20 }): Promise<ToolResponse> => {
+      try {
+        const renderHotspots = await browserManager.getRenderHotspots(url, threshold, windowMs, limit);
+        if ("error" in renderHotspots) return err(renderHotspots.error);
+
+        const targetPathText =
+          renderHotspots.hotspots.find((entry) => entry.componentName === componentName || entry.pathText.split(" > ").includes(componentName))
+            ?.pathText;
+        const [hookChanges, inspection] = await Promise.all([
+          browserManager.getHookChanges(url, componentName, targetPathText, 50),
+          browserManager.inspectComponent(url, componentName, "compact"),
+        ]);
+        if ("error" in hookChanges) return err(hookChanges.error);
+        if ("error" in inspection) return err(inspection.error);
+
+        return ok(
+          createRenderAttributionDiagnosis({
+            componentName,
+            renderHotspots,
+            hookChanges,
+            inspection,
+          })
+        );
+      } catch (e) {
+        return err(`attribute_render failed unexpectedly: ${String(e)}`);
       }
     }
   );

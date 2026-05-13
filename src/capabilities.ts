@@ -113,6 +113,12 @@ const capabilityCatalog = {
     modes: ["replay"],
     summary: "Verdict-first runtime bug triage for vague symptoms before drilling into atomic tools.",
   },
+  attribute_render: {
+    status: "available",
+    tools: ["attribute_render"],
+    modes: ["replay"],
+    summary: "Explain why a component rendered by attributing the strongest prop, state, context, provider, hook, or parent cause.",
+  },
   get_hook_changes: {
     status: "available",
     tools: ["get_hook_changes"],
@@ -145,7 +151,7 @@ const capabilityCatalog = {
   },
   investigation_tools: {
     status: "available",
-    tools: ["diagnose_excess_renders", "find_memo_breaks", "diagnose_runtime_bug"],
+    tools: ["diagnose_excess_renders", "find_memo_breaks", "attribute_render", "diagnose_runtime_bug"],
     modes: ["replay"],
     summary: "Prefer these verdict-first investigations before chaining the lower-level atomic diagnostics yourself.",
   },

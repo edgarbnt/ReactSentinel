@@ -178,12 +178,16 @@ export interface RenderCountsResponse {
   durationMs: number;
 }
 
-export type RenderHotspotCauseType =
-  | "unstable_state"
-  | "unstable_hook_value"
-  | "unstable_props"
-  | "repeated_effect"
+export type RenderAttributionCauseType =
+  | "prop_diff"
+  | "state_change"
+  | "context_change"
+  | "parent_render"
+  | "provider_value_recreated"
+  | "hook_instability"
   | "unknown";
+
+export type RenderHotspotCauseType = RenderAttributionCauseType;
 
 export interface RenderHotspotCause {
   type: RenderHotspotCauseType;

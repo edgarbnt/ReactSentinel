@@ -27,6 +27,12 @@ type RenderCountSample = {
   timestamp: string;
   renderId: number;
   props: Record<string, unknown>;
+  parentName: string | null;
+  contexts: {
+    name: string;
+    source: "dependency" | "provider";
+    value: unknown;
+  }[];
   hooks: {
     index: number;
     kind: ComponentHookKind;
@@ -188,6 +194,28 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
       return fiber.type._context ?? fiber.type.context ?? null;
     };
 
+    const getTypeDisplayName = (type) => {
+      if (!type) return null;
+      if (typeof type === "string") return type;
+      if (typeof type === "function") {
+        return type.displayName || type.name || null;
+      }
+      if (typeof type === "object") {
+        if (typeof type.displayName === "string" && type.displayName.trim().length > 0) {
+          return type.displayName;
+        }
+        if (typeof type.render === "function") {
+          const renderName = type.render.displayName || type.render.name || "Anonymous";
+          return "ForwardRef(" + renderName + ")";
+        }
+        if ("type" in type) {
+          const innerName = getTypeDisplayName(type.type);
+          return innerName ? "Memo(" + innerName + ")" : "Memo";
+        }
+      }
+      return null;
+    };
+
     const getComponentName = (fiber) => {
       if (typeof fiber.type === "string") return fiber.type;
       if (typeof fiber.type === "function") {
@@ -196,11 +224,12 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
       if (fiber.tag === 10) {
         return getContextName(getFiberContextObject(fiber)) + ".Provider";
       }
-      if (fiber.type && typeof fiber.type === "object" && typeof fiber.type.displayName === "string") {
-        return fiber.type.displayName;
+      const resolvedName = getTypeDisplayName(fiber.type);
+      if (resolvedName) {
+        return resolvedName;
       }
       if (fiber.tag === 3) return "HostRoot";
-      return "Context/Memo/ForwardRef";
+      return "AnonymousComposite";
     };
 
     const classifyHook = (hook, index) => {
@@ -235,6 +264,44 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
       return hooks;
     };
 
+    const extractContexts = (fiber, pathFibers) => {
+      const fromDependencies = [];
+      const firstContext = fiber.dependencies?.firstContext;
+      const dependencySeen = new Set();
+      let current = firstContext;
+
+      while (current && typeof current === "object") {
+        const name = getContextName(current.context);
+        if (!dependencySeen.has(name)) {
+          dependencySeen.add(name);
+          fromDependencies.push({
+            name,
+            source: "dependency",
+            value: serializeValue(current.memoizedValue),
+          });
+        }
+        current = current.next ?? null;
+      }
+
+      if (fromDependencies.length > 0) {
+        return fromDependencies;
+      }
+
+      const providers = [];
+      for (const pathFiber of pathFibers) {
+        if (!(pathFiber.tag === 10 && pathFiber.memoizedProps && typeof pathFiber.memoizedProps === "object" && "value" in pathFiber.memoizedProps)) {
+          continue;
+        }
+        providers.push({
+          name: getContextName(getFiberContextObject(pathFiber)),
+          source: "provider",
+          value: serializeValue(pathFiber.memoizedProps.value),
+        });
+      }
+
+      return providers;
+    };
+
     const isTrackableComponent = (fiber) => {
       if (!isFiber(fiber)) return false;
       if (fiber.tag === 3 || fiber.tag === 6 || fiber.tag === 10) return false;
@@ -258,7 +325,7 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
       }
     };
 
-    const recordRender = (fiber, path) => {
+    const recordRender = (fiber, path, pathFibers) => {
       const state = ensureState();
       const timestamp = new Date().toISOString();
       const componentName = getComponentName(fiber);
@@ -284,6 +351,8 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
         timestamp,
         renderId: state.nextRenderId++,
         props: serializeProps(fiber.memoizedProps),
+        parentName: path.length > 1 ? path[path.length - 2] : null,
+        contexts: extractContexts(fiber, pathFibers),
         hooks: extractHooks(fiber),
       });
       if (entry.samples.length > maxSamplesPerComponent) {
@@ -291,17 +360,18 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
       }
     };
 
-    const walk = (fiber, path) => {
+    const walk = (fiber, path, pathFibers) => {
       if (!isFiber(fiber) || fiber.tag === 6) return;
       const trackable = isTrackableComponent(fiber);
       const nextPath = trackable ? path.concat(getComponentName(fiber)) : path;
+      const nextPathFibers = trackable ? pathFibers.concat(fiber) : pathFibers;
       if (trackable && didRender(fiber)) {
-        recordRender(fiber, nextPath);
+        recordRender(fiber, nextPath, nextPathFibers);
       }
 
       let child = fiber.child;
       while (child) {
-        walk(child, nextPath);
+        walk(child, nextPath, nextPathFibers);
         child = child.sibling;
       }
     };
@@ -317,7 +387,7 @@ export function buildRenderMonitorSource(args: RenderMonitorInitArgs): string {
 
       let child = rootFiber.child;
       while (child) {
-        walk(child, []);
+        walk(child, [], []);
         child = child.sibling;
       }
     };
@@ -425,24 +495,53 @@ function buildProbableCause(entry: RenderCountRecord): RenderHotspotCause {
 
   const hookChanges = new Map<string, { index: number; kind: ComponentHookKind; changeCount: number }>();
   let propChangeCount = 0;
+  let contextChangeCount = 0;
+  let providerChangeCount = 0;
+  let parentRenderCount = 0;
 
   for (let index = 1; index < samples.length; index += 1) {
     const previousSample = samples[index - 1];
     const currentSample = samples[index];
 
-    if (stableStringify(previousSample.props) !== stableStringify(currentSample.props)) {
+    const propsChanged = stableStringify(previousSample.props) !== stableStringify(currentSample.props);
+    if (propsChanged) {
       propChangeCount += 1;
+    }
+
+    const previousContexts = new Map(previousSample.contexts.map((context) => [`${context.name}:${context.source}`, context] as const));
+    const currentContexts = new Map(currentSample.contexts.map((context) => [`${context.name}:${context.source}`, context] as const));
+    const contextKeys = new Set([...previousContexts.keys(), ...currentContexts.keys()]);
+    let contextChanged = false;
+    let providerChanged = false;
+    for (const contextKey of contextKeys) {
+      const previousContext = previousContexts.get(contextKey);
+      const currentContext = currentContexts.get(contextKey);
+      const previousValue = previousContext ? stableStringify(previousContext.value) : "undefined";
+      const currentValue = currentContext ? stableStringify(currentContext.value) : "undefined";
+      if (previousValue === currentValue) continue;
+      contextChanged = true;
+      if ((currentContext?.source ?? previousContext?.source) === "provider") {
+        providerChanged = true;
+      }
+    }
+    if (contextChanged) {
+      contextChangeCount += 1;
+    }
+    if (providerChanged) {
+      providerChangeCount += 1;
     }
 
     const previousHooks = new Map(previousSample.hooks.map((hook) => [`${hook.index}:${hook.kind}`, hook] as const));
     const currentHooks = new Map(currentSample.hooks.map((hook) => [`${hook.index}:${hook.kind}`, hook] as const));
     const hookKeys = new Set([...previousHooks.keys(), ...currentHooks.keys()]);
+    let hookChanged = false;
     for (const hookKey of hookKeys) {
       const previousHook = previousHooks.get(hookKey);
       const currentHook = currentHooks.get(hookKey);
       const previousValue = previousHook ? stableStringify(previousHook.value) : "undefined";
       const currentValue = currentHook ? stableStringify(currentHook.value) : "undefined";
       if (previousValue === currentValue) continue;
+      hookChanged = true;
 
       const currentStat = hookChanges.get(hookKey);
       hookChanges.set(hookKey, {
@@ -450,6 +549,10 @@ function buildProbableCause(entry: RenderCountRecord): RenderHotspotCause {
         kind: currentHook?.kind ?? previousHook?.kind ?? "unknown",
         changeCount: (currentStat?.changeCount ?? 0) + 1,
       });
+    }
+
+    if (!propsChanged && !contextChanged && !hookChanged && previousSample.parentName === currentSample.parentName) {
+      parentRenderCount += 1;
     }
   }
 
@@ -460,27 +563,48 @@ function buildProbableCause(entry: RenderCountRecord): RenderHotspotCause {
   if (dominantHook && dominantHook.changeCount >= hotThreshold) {
     if (dominantHook.kind === "state") {
       return {
-        type: "unstable_state",
+        type: "state_change",
         summary: `State hook #${dominantHook.index} changed on ${dominantHook.changeCount}/${transitions} recent render transitions.`,
       };
     }
 
     return {
-      type: "unstable_hook_value",
+      type: "hook_instability",
       summary: `Hook #${dominantHook.index} (${dominantHook.kind}) changed on ${dominantHook.changeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (providerChangeCount >= hotThreshold) {
+    return {
+      type: "provider_value_recreated",
+      summary: `An upstream provider value changed on ${providerChangeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (contextChangeCount >= hotThreshold) {
+    return {
+      type: "context_change",
+      summary: `Observed context values changed on ${contextChangeCount}/${transitions} recent render transitions.`,
     };
   }
 
   if (propChangeCount >= hotThreshold) {
     return {
-      type: "unstable_props",
+      type: "prop_diff",
       summary: `Props changed on ${propChangeCount}/${transitions} recent render transitions.`,
     };
   }
 
+  if (parentRenderCount >= hotThreshold) {
+    return {
+      type: "parent_render",
+      summary: "The component rerendered repeatedly without dominant local prop, hook, or context changes, which suggests parent-driven rerenders.",
+    };
+  }
+
   return {
-    type: "repeated_effect",
-    summary: "Recent renders kept repeating without one dominant prop diff, which suggests an effect loop or chained state updates.",
+    type: "unknown",
+    summary: "Recent renders kept repeating, but React-Sentinel could not isolate one dominant cause from props, hooks, contexts, or parent churn.",
   };
 }
 
