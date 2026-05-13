@@ -7,7 +7,10 @@ import type {
   RuntimePatch,
   RuntimePatchApplyResponse,
   RuntimePatchResetResponse,
+  ValidationResult,
+  ValidationScenarioResponse,
 } from "../browser/protocol.js";
+import type { DiagnosticVerdict } from "../diagnostics/protocol.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 import { assertionSchema, buildScenarioMarkdown, replayStepSchema } from "./interaction.js";
@@ -29,6 +32,151 @@ const replayWaitUntilSchema = z
   .default("domcontentloaded");
 
 const resetStrategySchema = z.enum(["reload", "reset_session"]);
+
+type VerificationVerdict = "CONFIRMED" | "REFUTED" | "PARTIAL";
+
+type HypothesisVerificationRawData = {
+  hypothesis: string;
+  report: ValidationScenarioResponse;
+};
+
+type FixVerificationRawData = {
+  fix_description: string;
+  baseline: ValidationScenarioResponse;
+  patched: PatchedValidationScenarioResponse;
+  regression_assertions: Assertion[];
+};
+
+function countAssertionFailures(results: ValidationResult[]): number {
+  return results.filter((result) => !result.pass).length;
+}
+
+function buildHypothesisMarkdown(
+  hypothesis: string,
+  verdict: VerificationVerdict,
+  report: ValidationScenarioResponse
+): string {
+  return [
+    "# Hypothesis Verification Report",
+    "",
+    `- Hypothesis: ${hypothesis}`,
+    `- Verdict: ${verdict}`,
+    "",
+    buildScenarioMarkdown(report),
+  ].join("\n");
+}
+
+function buildFixVerificationMarkdown(
+  fixDescription: string,
+  verdict: VerificationVerdict,
+  baseline: ValidationScenarioResponse,
+  patched: PatchedValidationScenarioResponse,
+  regressionAssertions: Assertion[]
+): string {
+  const lines = [
+    "# Fix Verification Report",
+    "",
+    `- Fix: ${fixDescription}`,
+    `- Verdict: ${verdict}`,
+    `- Regression assertions: ${regressionAssertions.length}`,
+    "",
+    "## Baseline",
+    buildScenarioMarkdown(baseline),
+    "",
+    "## Patched Run",
+    buildPatchMarkdown(patched.verdict, patched.apply, patched.report, patched.cleanup),
+  ];
+
+  return lines.join("\n");
+}
+
+function createHypothesisVerdict(seed: {
+  hypothesis: string;
+  report: ValidationScenarioResponse;
+}): DiagnosticVerdict<VerificationVerdict, HypothesisVerificationRawData> {
+  const stepFailures = seed.report.steps.filter((step) => !step.success).length;
+  const assertionFailures = countAssertionFailures(seed.report.assertions);
+  const verdict: VerificationVerdict =
+    stepFailures === 0 && assertionFailures === 0
+      ? "CONFIRMED"
+      : stepFailures === 0 && assertionFailures === seed.report.assertions.length
+        ? "REFUTED"
+        : "PARTIAL";
+
+  return {
+    verdict,
+    summary:
+      verdict === "CONFIRMED"
+        ? `The runtime evidence confirms the hypothesis: ${seed.hypothesis}`
+        : verdict === "REFUTED"
+          ? `The runtime evidence does not support the hypothesis: ${seed.hypothesis}`
+          : `The runtime evidence only partially supports the hypothesis: ${seed.hypothesis}`,
+    evidence: [
+      `Failed steps: ${stepFailures}`,
+      `Failed assertions: ${assertionFailures}/${seed.report.assertions.length}`,
+    ],
+    confidence: verdict === "PARTIAL" ? "medium" : "high",
+    next_step:
+      verdict === "CONFIRMED"
+        ? "Use the failing evidence to design or verify a targeted fix."
+        : verdict === "REFUTED"
+          ? "Refine the hypothesis or change the reproduction protocol before editing source code."
+          : "Tighten the assertions or reproduction steps to make the result decisive.",
+    raw_data: {
+      hypothesis: seed.hypothesis,
+      report: seed.report,
+    },
+  };
+}
+
+function createFixVerdict(seed: {
+  fixDescription: string;
+  baseline: ValidationScenarioResponse;
+  patched: PatchedValidationScenarioResponse;
+  regressionAssertions: Assertion[];
+}): DiagnosticVerdict<VerificationVerdict, FixVerificationRawData> {
+  const baselineFailures = countAssertionFailures(seed.baseline.assertions);
+  const patchedFailures = countAssertionFailures(seed.patched.report.assertions);
+  const regressionFailureCount = seed.regressionAssertions.length === 0
+    ? 0
+    : seed.patched.report.assertions
+        .slice(-seed.regressionAssertions.length)
+        .filter((result) => !result.pass).length;
+  const verdict: VerificationVerdict =
+    baselineFailures > 0 && patchedFailures === 0 && regressionFailureCount === 0
+      ? "CONFIRMED"
+      : patchedFailures >= baselineFailures
+        ? "REFUTED"
+        : "PARTIAL";
+
+  return {
+    verdict,
+    summary:
+      verdict === "CONFIRMED"
+        ? `The patch fixes the targeted runtime issue without visible regressions: ${seed.fixDescription}`
+        : verdict === "REFUTED"
+          ? `The patch does not resolve the target issue convincingly: ${seed.fixDescription}`
+          : `The patch improves the target issue but leaves uncertainty or visible regressions: ${seed.fixDescription}`,
+    evidence: [
+      `Baseline assertion failures: ${baselineFailures}`,
+      `Patched assertion failures: ${patchedFailures}`,
+      `Patched regression failures: ${regressionFailureCount}`,
+    ],
+    confidence: verdict === "PARTIAL" ? "medium" : "high",
+    next_step:
+      verdict === "CONFIRMED"
+        ? "Promote the runtime patch into a source change or validate it against a broader regression suite."
+        : verdict === "REFUTED"
+          ? "Revise the patch because the runtime assertions still fail or did not improve."
+          : "Inspect the remaining failed assertions and regression signals before deciding whether to keep the patch.",
+    raw_data: {
+      fix_description: seed.fixDescription,
+      baseline: seed.baseline,
+      patched: seed.patched,
+      regression_assertions: seed.regressionAssertions,
+    },
+  };
+}
 
 function buildPatchMarkdown(
   verdict: PatchedValidationScenarioResponse["verdict"],
@@ -70,6 +218,8 @@ export const PATCH_TOOL_NAMES = [
   "apply_runtime_patch",
   "apply_patch_then_replay",
   "reset_runtime_patches",
+  "verify_hypothesis",
+  "verify_fix",
 ] as const;
 
 export function register(server: McpServer): void {
@@ -225,6 +375,172 @@ export function register(server: McpServer): void {
         return "error" in result ? err(result.error) : ok(result);
       } catch (error) {
         return err(`reset_runtime_patches failed unexpectedly: ${String(error)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "verify_hypothesis",
+    [
+      "Verify a runtime hypothesis before changing repository code.",
+      "Runs a replay protocol plus assertions and returns CONFIRMED, REFUTED, or PARTIAL with evidence and a Markdown report.",
+      "Typical examples: stale search results overwrite newer intent, a hydration mismatch appears on first load, or a spinner never settles after a failed request.",
+    ].join(" "),
+    {
+      hypothesis: z.string().min(3).max(500).describe("Hypothesis to validate against runtime behavior."),
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before verification."),
+      steps: z.array(replayStepSchema).min(1).describe("Replay protocol used to test the hypothesis."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions that should hold if the hypothesis is correct."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this verification."),
+      waitUntil: replayWaitUntilSchema.describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+    },
+    async ({ hypothesis, url, steps, assertions, headless, waitUntil, timeoutMs, continueOnError, waitMs }): Promise<ToolResponse> => {
+      try {
+        const report = await browserManager.runValidationScenario(steps, assertions as Assertion[], {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: true,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in report) return err(report.error);
+
+        const response = createHypothesisVerdict({
+          hypothesis,
+          report,
+        });
+
+        return ok({
+          ...response,
+          reportMarkdown: buildHypothesisMarkdown(hypothesis, response.verdict, report),
+        });
+      } catch (error) {
+        return err(`verify_hypothesis failed unexpectedly: ${String(error)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "verify_fix",
+    [
+      "Validate a runtime patch against a failing scenario before editing source files.",
+      "Runs a baseline scenario, applies the patch in the replay sandbox, reruns the scenario, checks optional regression assertions, and returns CONFIRMED, REFUTED, or PARTIAL.",
+    ].join(" "),
+    {
+      fixDescription: z.string().min(3).max(500).describe("Short description of the fix that the runtime patch is supposed to validate."),
+      patch: runtimePatchSchema.describe("Runtime patch payload for the replay sandbox."),
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
+      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions that should pass after the fix is applied."),
+      regressionAssertions: z.array(assertionSchema).optional().default([]).describe("Optional guard assertions that should remain true before and after the patch."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this verification."),
+      waitUntil: replayWaitUntilSchema.describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+      cleanup: z.enum(["keep", "reload", "reset_session"]).optional().default("reset_session").describe("How to clean the replay sandbox after patch verification."),
+      reopenUrl: z.string().url().optional().describe("Optional clean URL to reopen after cleanup when using reload or reset_session."),
+    },
+    async ({
+      fixDescription,
+      patch,
+      url,
+      steps,
+      assertions,
+      regressionAssertions,
+      headless,
+      waitUntil,
+      timeoutMs,
+      continueOnError,
+      waitMs,
+      cleanup,
+      reopenUrl,
+    }): Promise<ToolResponse> => {
+      try {
+        const combinedAssertions = [...(assertions as Assertion[]), ...(regressionAssertions as Assertion[])];
+        const baseline = await browserManager.runValidationScenario(steps, combinedAssertions, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: true,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in baseline) return err(baseline.error);
+
+        const applyResult = await browserManager.applyRuntimePatch(patch as RuntimePatch, {
+          url,
+          headless,
+          waitUntil,
+          timeoutMs,
+          resetSession: true,
+        });
+        if ("error" in applyResult) return err(applyResult.error);
+
+        const patchedReport = await browserManager.runValidationScenario(steps, combinedAssertions, {
+          headless,
+          continueOnError,
+          waitMs,
+        });
+        if ("error" in patchedReport) {
+          if (cleanup !== "keep") {
+            const cleanupResult = await browserManager.resetRuntimePatches({
+              strategy: cleanup as "reload" | "reset_session",
+              waitUntil,
+              timeoutMs,
+              headless,
+              reopenUrl,
+            });
+            if ("error" in cleanupResult) {
+              return err(`${patchedReport.error} Cleanup after patch verification also failed: ${cleanupResult.error}.`);
+            }
+          }
+          return err(patchedReport.error);
+        }
+
+        const patched: PatchedValidationScenarioResponse = {
+          verdict: patchedReport.success ? "patch_validated" : "patch_failed",
+          apply: applyResult,
+          report: patchedReport,
+        };
+
+        if (cleanup !== "keep") {
+          const cleanupResult = await browserManager.resetRuntimePatches({
+            strategy: cleanup as "reload" | "reset_session",
+            waitUntil,
+            timeoutMs,
+            headless,
+            reopenUrl,
+          });
+          if ("error" in cleanupResult) return err(cleanupResult.error);
+          patched.cleanup = cleanupResult;
+        }
+
+        const response = createFixVerdict({
+          fixDescription,
+          baseline,
+          patched,
+          regressionAssertions: regressionAssertions as Assertion[],
+        });
+
+        return ok({
+          ...response,
+          reportMarkdown: buildFixVerificationMarkdown(
+            fixDescription,
+            response.verdict,
+            baseline,
+            patched,
+            regressionAssertions as Assertion[]
+          ),
+        });
+      } catch (error) {
+        return err(`verify_fix failed unexpectedly: ${String(error)}`);
       }
     }
   );

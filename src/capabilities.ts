@@ -185,6 +185,18 @@ const capabilityCatalog = {
     modes: ["sandbox"],
     summary: "Patch, replay, and validate in one sandbox flow.",
   },
+  verify_hypothesis: {
+    status: "available",
+    tools: ["verify_hypothesis"],
+    modes: ["replay", "sandbox"],
+    summary: "Confirm, refute, or partially support a runtime hypothesis before touching source code.",
+  },
+  verify_fix: {
+    status: "available",
+    tools: ["verify_fix"],
+    modes: ["sandbox"],
+    summary: "Compare baseline versus patched replay behavior to validate a runtime fix and surface regressions.",
+  },
   reset_runtime_patches: {
     status: "available",
     tools: ["reset_runtime_patches"],
@@ -193,7 +205,7 @@ const capabilityCatalog = {
   },
   shadow_sandbox: {
     status: "partial",
-    tools: ["apply_runtime_patch", "apply_patch_then_replay", "reset_runtime_patches"],
+    tools: ["apply_runtime_patch", "apply_patch_then_replay", "verify_fix", "reset_runtime_patches"],
     modes: ["sandbox"],
     summary: "Shadow sandbox is available for script-on-page patches only; broader patch shapes are still planned.",
   },
