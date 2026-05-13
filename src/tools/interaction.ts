@@ -108,6 +108,53 @@ const stressDelayProfileSchema = z
   .max(12)
   .optional();
 
+const scenarioValidationToolSchema = {
+  url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
+  steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
+  assertions: z.array(assertionSchema).min(1).describe("Assertions to evaluate after the replayed actions."),
+  headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
+  waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional().default("domcontentloaded").describe("Navigation readiness event when url is provided."),
+  timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+  resetSession: z.boolean().optional().default(false).describe("Close the current replay browser first and start a fresh isolated session."),
+  continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+  waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+};
+
+type ScenarioValidationToolArgs = {
+  url?: string;
+  steps: ReplayStep[];
+  assertions: Assertion[];
+  headless?: boolean;
+  waitUntil: "load" | "domcontentloaded" | "networkidle";
+  timeoutMs: number;
+  resetSession: boolean;
+  continueOnError: boolean;
+  waitMs: number;
+};
+
+async function runScenarioValidationTool(args: ScenarioValidationToolArgs, toolName: string): Promise<ToolResponse> {
+  const { url, steps, assertions, headless, waitUntil, timeoutMs, resetSession, continueOnError, waitMs } = args;
+  try {
+    const result = await browserManager.runValidationScenario(steps, assertions, {
+      url,
+      headless,
+      waitUntil,
+      timeoutMs,
+      resetSession,
+      continueOnError,
+      waitMs,
+    });
+    if ("error" in result) return err(result.error);
+
+    return ok({
+      report: result,
+      reportMarkdown: buildScenarioMarkdown(result),
+    });
+  } catch (e) {
+    return err(`${toolName} failed unexpectedly: ${String(e)}`);
+  }
+}
+
 type StressIterationResult = {
   iteration: number;
   delaysMs: number[];
@@ -428,38 +475,8 @@ export function register(server: McpServer): void {
       "Use this instead of grep or ad-hoc clicking when a bug only appears after several browser actions and you need a reproducible runtime verdict.",
       "Returns both a structured JSON report and a Markdown report with actions, assertions, and useful traces.",
     ].join(" "),
-    {
-      url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
-      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
-      assertions: z.array(assertionSchema).min(1).describe("Assertions to evaluate after the replayed actions."),
-      headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
-      waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional().default("domcontentloaded").describe("Navigation readiness event when url is provided."),
-      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
-      resetSession: z.boolean().optional().default(false).describe("Close the current replay browser first and start a fresh isolated session."),
-      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
-      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
-    },
-    async ({ url, steps, assertions, headless, waitUntil, timeoutMs, resetSession, continueOnError, waitMs }): Promise<ToolResponse> => {
-      try {
-        const result = await browserManager.runValidationScenario(steps, assertions, {
-          url,
-          headless,
-          waitUntil,
-          timeoutMs,
-          resetSession,
-          continueOnError,
-          waitMs,
-        });
-        if ("error" in result) return err(result.error);
-
-        return ok({
-          report: result,
-          reportMarkdown: buildScenarioMarkdown(result),
-        });
-      } catch (e) {
-        return err(`validate_scenario failed unexpectedly: ${String(e)}`);
-      }
-    }
+    scenarioValidationToolSchema,
+    async (args): Promise<ToolResponse> => runScenarioValidationTool(args as ScenarioValidationToolArgs, "validate_scenario")
   );
 
   server.tool(
@@ -468,38 +485,8 @@ export function register(server: McpServer): void {
       "Action-oriented alias for validate_scenario that checks whether a user flow still works end-to-end.",
       "Prefer this when the agent is thinking in terms of user journeys rather than generic scenario validation.",
     ].join(" "),
-    {
-      url: z.string().url().optional().describe("Optional URL to open in the replay browser before the scenario runs."),
-      steps: z.array(replayStepSchema).min(1).describe("Ordered replay steps to execute before assertions."),
-      assertions: z.array(assertionSchema).min(1).describe("Assertions to evaluate after the replayed actions."),
-      headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
-      waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional().default("domcontentloaded").describe("Navigation readiness event when url is provided."),
-      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
-      resetSession: z.boolean().optional().default(false).describe("Close the current replay browser first and start a fresh isolated session."),
-      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
-      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
-    },
-    async ({ url, steps, assertions, headless, waitUntil, timeoutMs, resetSession, continueOnError, waitMs }): Promise<ToolResponse> => {
-      try {
-        const result = await browserManager.runValidationScenario(steps, assertions, {
-          url,
-          headless,
-          waitUntil,
-          timeoutMs,
-          resetSession,
-          continueOnError,
-          waitMs,
-        });
-        if ("error" in result) return err(result.error);
-
-        return ok({
-          report: result,
-          reportMarkdown: buildScenarioMarkdown(result),
-        });
-      } catch (e) {
-        return err(`validate_user_flow failed unexpectedly: ${String(e)}`);
-      }
-    }
+    scenarioValidationToolSchema,
+    async (args): Promise<ToolResponse> => runScenarioValidationTool(args as ScenarioValidationToolArgs, "validate_user_flow")
   );
 
   // -------------------------------------------------------------------------

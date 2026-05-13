@@ -602,9 +602,51 @@ function buildProbableCause(entry: RenderCountRecord): RenderHotspotCause {
     };
   }
 
+  if (dominantHook && dominantHook.changeCount > 0) {
+    if (dominantHook.kind === "state") {
+      return {
+        type: "state_change",
+        summary: `State hook #${dominantHook.index} changed on ${dominantHook.changeCount}/${transitions} recent render transitions.`,
+      };
+    }
+
+    return {
+      type: "hook_instability",
+      summary: `Hook #${dominantHook.index} (${dominantHook.kind}) changed on ${dominantHook.changeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (providerChangeCount > 0) {
+    return {
+      type: "provider_value_recreated",
+      summary: `An upstream provider value changed on ${providerChangeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (contextChangeCount > 0) {
+    return {
+      type: "context_change",
+      summary: `Observed context values changed on ${contextChangeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (propChangeCount > 0) {
+    return {
+      type: "prop_diff",
+      summary: `Props changed on ${propChangeCount}/${transitions} recent render transitions.`,
+    };
+  }
+
+  if (parentRenderCount > 0) {
+    return {
+      type: "parent_render",
+      summary: "The component rerendered repeatedly without dominant local prop, hook, or context changes, which suggests parent-driven rerenders.",
+    };
+  }
+
   return {
-    type: "unknown",
-    summary: "Recent renders kept repeating, but React-Sentinel could not isolate one dominant cause from props, hooks, contexts, or parent churn.",
+    type: "parent_render",
+    summary: "Recent renders kept repeating without a dominant local signal in props, hooks, or contexts, so parent-driven churn is the most likely cause.",
   };
 }
 

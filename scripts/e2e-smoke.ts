@@ -284,12 +284,22 @@ async function main(): Promise<void> {
       "get_render_hotspots"
     ));
     const infiniteLoopHotspot = renderHotspots.hotspots.find((entry) => entry.componentName === "InfiniteLoopScenario");
+    const nonUnknownProbableCauses = new Set([
+      "state_change",
+      "hook_instability",
+      "provider_value_recreated",
+      "context_change",
+      "prop_diff",
+      "parent_render",
+    ]);
     assert(renderHotspots.hotspots.length >= 1, "get_render_hotspots returned no hotspots.");
     assert(
-      infiniteLoopHotspot
-        ? infiniteLoopHotspot.probableCause.summary.trim().length > 0
-        : renderHotspots.hotspots.some((entry) => entry.probableCause.summary.trim().length > 0),
-      "get_render_hotspots did not return a readable probable cause."
+      Boolean(infiniteLoopHotspot),
+      "get_render_hotspots did not include InfiniteLoopScenario as a hotspot."
+    );
+    assert(
+      infiniteLoopHotspot ? nonUnknownProbableCauses.has(infiniteLoopHotspot.probableCause.type) : false,
+      "get_render_hotspots classified InfiniteLoopScenario with an unexpected or unknown probable cause type."
     );
     checks.push("get_render_hotspots:ok");
 
