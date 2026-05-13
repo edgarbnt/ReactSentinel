@@ -7,7 +7,8 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { browserManager } from "../browser/index.js";
-import type { Assertion, ValidationScenarioResponse } from "../browser/protocol.js";
+import type { Assertion, ReplayStep, ValidationScenarioResponse } from "../browser/protocol.js";
+import type { DiagnosticVerdict } from "../diagnostics/protocol.js";
 import { ok, err } from "../types.js";
 import type { ToolResponse } from "../types.js";
 
@@ -97,6 +98,166 @@ export const assertionSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+const stressTimingStrategySchema = z
+  .enum(["none", "adversarial"])
+  .default("adversarial");
+
+const stressDelayProfileSchema = z
+  .array(z.number().int().min(0).max(5_000))
+  .min(1)
+  .max(12)
+  .optional();
+
+type StressIterationResult = {
+  iteration: number;
+  delaysMs: number[];
+  success: boolean;
+  failureReasons: string[];
+  report: ValidationScenarioResponse;
+};
+
+type StressTestVerdict =
+  | "stress_test_passed"
+  | "intermittent_failure_detected";
+
+type StressTestRawData = {
+  iterations: StressIterationResult[];
+  minimal_reproduction?: ReplayStep[];
+};
+
+function countAdversarialGaps(steps: ReplayStep[]): number {
+  return steps.filter((step) => step.action !== "wait").length;
+}
+
+function createWaitStep(durationMs: number): ReplayStep {
+  return { action: "wait", durationMs };
+}
+
+function buildDelaySchedule(
+  iteration: number,
+  slots: number,
+  strategy: "none" | "adversarial",
+  profile: number[]
+): number[] {
+  if (strategy === "none") {
+    return Array.from({ length: slots }, () => 0);
+  }
+
+  return Array.from({ length: slots }, (_, index) => profile[(iteration + index) % profile.length] ?? 0);
+}
+
+function injectAdversarialWaits(steps: ReplayStep[], delaysMs: number[]): ReplayStep[] {
+  if (delaysMs.length === 0) {
+    return [...steps];
+  }
+
+  const expanded: ReplayStep[] = [];
+  let delayIndex = 0;
+
+  for (const step of steps) {
+    expanded.push(step);
+    if (step.action === "wait") {
+      continue;
+    }
+
+    const delayMs = delaysMs[delayIndex] ?? 0;
+    delayIndex += 1;
+    if (delayMs > 0) {
+      expanded.push(createWaitStep(delayMs));
+    }
+  }
+
+  return expanded;
+}
+
+function summarizeFailureReasons(report: ValidationScenarioResponse): string[] {
+  const stepFailures = report.steps
+    .filter((step) => !step.success)
+    .map((step) => `Step #${step.index} ${step.step.action} failed${step.error ? `: ${step.error}` : "."}`);
+  const assertionFailures = report.assertions
+    .filter((assertion) => !assertion.pass)
+    .map((assertion) => assertion.details ?? "Assertion failed.");
+
+  return [...stepFailures, ...assertionFailures];
+}
+
+async function minimizeFailingSequence(
+  steps: ReplayStep[],
+  assertions: Assertion[],
+  options: {
+    url?: string;
+    headless?: boolean;
+    waitUntil?: "load" | "domcontentloaded" | "networkidle";
+    timeoutMs?: number;
+    continueOnError?: boolean;
+    waitMs?: number;
+  }
+): Promise<ReplayStep[] | null> {
+  let current = [...steps];
+  let changed = true;
+
+  while (changed && current.length > 1) {
+    changed = false;
+
+    for (let index = 0; index < current.length; index += 1) {
+      const candidate = current.filter((_, candidateIndex) => candidateIndex !== index);
+      const report = await browserManager.runValidationScenario(candidate, assertions, {
+        ...options,
+        resetSession: true,
+      });
+      if ("error" in report || report.success) {
+        continue;
+      }
+
+      current = candidate;
+      changed = true;
+      break;
+    }
+  }
+
+  return current.length === steps.length ? null : current;
+}
+
+function createStressTestVerdict(seed: {
+  iterations: StressIterationResult[];
+  minimalReproduction?: ReplayStep[] | null;
+}): DiagnosticVerdict<StressTestVerdict, StressTestRawData> {
+  const failedIterations = seed.iterations.filter((iteration) => !iteration.success);
+  const raw_data: StressTestRawData = {
+    iterations: seed.iterations,
+    ...(seed.minimalReproduction ? { minimal_reproduction: seed.minimalReproduction } : {}),
+  };
+
+  if (failedIterations.length === 0) {
+    return {
+      verdict: "stress_test_passed",
+      summary: `All ${seed.iterations.length} stress iterations passed without reproducing the target inconsistency.`,
+      evidence: [
+        `Passed iterations: ${seed.iterations.length}/${seed.iterations.length}`,
+      ],
+      confidence: "medium",
+      next_step: "Increase the iteration count or widen the adversarial delay profile if the bug is rarer than this run.",
+      raw_data,
+    };
+  }
+
+  const firstFailure = failedIterations[0];
+  return {
+    verdict: "intermittent_failure_detected",
+    summary: `${failedIterations.length}/${seed.iterations.length} stress iterations failed, which confirms an intermittent runtime bug under adversarial timing.`,
+    evidence: [
+      `First failing iteration: #${firstFailure.iteration + 1}`,
+      `Failure reasons: ${firstFailure.failureReasons.join(" | ") || "Assertion failed without extra details."}`,
+      `Minimal reproduction found: ${seed.minimalReproduction ? "yes" : "no"}`,
+    ],
+    confidence: failedIterations.length >= 2 ? "high" : "medium",
+    next_step: seed.minimalReproduction
+      ? "Replay the minimized failing sequence or feed it into verify_hypothesis / verify_fix."
+      : "Inspect the failing iteration trace and tighten assertions around the inconsistent state.",
+    raw_data,
+  };
+}
+
 function formatAssertion(assertion: Assertion): string {
   switch (assertion.type) {
     case "text_present":
@@ -179,6 +340,7 @@ export const INTERACTION_TOOL_NAMES = [
   "validate_after_action",
   "validate_scenario",
   "replay_interactions",
+  "find_race_conditions",
 ] as const;
 
 export function register(server: McpServer): void {
@@ -331,6 +493,94 @@ export function register(server: McpServer): void {
         return ok(result);
       } catch (e) {
         return err(`replay_interactions failed unexpectedly: ${String(e)}`);
+      }
+    }
+  );
+
+  server.tool(
+    "find_race_conditions",
+    [
+      "Stress-test a replay scenario across multiple iterations with optional adversarial delays between actions.",
+      "Returns pass/fail per iteration, highlights intermittent failures, and attempts to shrink the first failing sequence into a minimal reproduction.",
+      "Use assertions as invariants that define the inconsistent runtime state you want React-Sentinel to catch.",
+    ].join(" "),
+    {
+      url: z.string().url().optional().describe("Optional URL to open in the replay browser before each iteration."),
+      steps: z.array(replayStepSchema).min(1).describe("Base replay steps. React-Sentinel may inject extra wait steps between actions when adversarial timing is enabled."),
+      assertions: z.array(assertionSchema).min(1).describe("Assertions that define the inconsistent state to catch."),
+      iterations: z.number().int().min(1).max(25).optional().default(7).describe("How many replay iterations to execute."),
+      timingStrategy: stressTimingStrategySchema.describe("Choose 'adversarial' to vary delays between interactions across iterations."),
+      delayProfileMs: stressDelayProfileSchema.describe("Optional delay profile in milliseconds. Defaults to 0, 25, 75, 150, 300, 600."),
+      headless: z.boolean().optional().describe("Override the replay browser mode for this scenario."),
+      waitUntil: z.enum(["load", "domcontentloaded", "networkidle"]).optional().default("domcontentloaded").describe("Navigation readiness event when url is provided."),
+      timeoutMs: z.number().int().min(1).max(120_000).optional().default(10_000).describe("Navigation timeout in milliseconds when url is provided."),
+      continueOnError: z.boolean().optional().default(false).describe("Keep executing later steps after a step failure."),
+      waitMs: z.number().int().min(0).max(60_000).optional().default(500).describe("Wait time in milliseconds before running assertions."),
+      minimizeFailure: z.boolean().optional().default(true).describe("Attempt to shrink the first failing sequence into a smaller reproduction."),
+    },
+    async ({
+      url,
+      steps,
+      assertions,
+      iterations,
+      timingStrategy,
+      delayProfileMs,
+      headless,
+      waitUntil,
+      timeoutMs,
+      continueOnError,
+      waitMs,
+      minimizeFailure,
+    }): Promise<ToolResponse> => {
+      try {
+        const delayProfile = delayProfileMs ?? [0, 25, 75, 150, 300, 600];
+        const gaps = countAdversarialGaps(steps);
+        const iterationResults: StressIterationResult[] = [];
+
+        for (let iteration = 0; iteration < iterations; iteration += 1) {
+          const delaysMs = buildDelaySchedule(iteration, gaps, timingStrategy, delayProfile);
+          const iterationSteps = injectAdversarialWaits(steps, delaysMs);
+          const report = await browserManager.runValidationScenario(iterationSteps, assertions, {
+            url,
+            headless,
+            waitUntil,
+            timeoutMs,
+            resetSession: true,
+            continueOnError,
+            waitMs,
+          });
+          if ("error" in report) return err(report.error);
+
+          iterationResults.push({
+            iteration,
+            delaysMs,
+            success: report.success,
+            failureReasons: summarizeFailureReasons(report),
+            report,
+          });
+        }
+
+        const firstFailure = iterationResults.find((iteration) => !iteration.success) ?? null;
+        const minimalReproduction =
+          minimizeFailure && firstFailure
+            ? await minimizeFailingSequence(firstFailure.report.steps.map((step) => step.step), assertions, {
+                url,
+                headless,
+                waitUntil,
+                timeoutMs,
+                continueOnError,
+                waitMs,
+              })
+            : null;
+
+        return ok(
+          createStressTestVerdict({
+            iterations: iterationResults,
+            minimalReproduction,
+          })
+        );
+      } catch (e) {
+        return err(`find_race_conditions failed unexpectedly: ${String(e)}`);
       }
     }
   );

@@ -161,6 +161,12 @@ const capabilityCatalog = {
     modes: ["replay", "sandbox"],
     summary: "Replay a scripted interaction sequence in the isolated browser.",
   },
+  find_race_conditions: {
+    status: "available",
+    tools: ["find_race_conditions"],
+    modes: ["replay", "sandbox"],
+    summary: "Stress-test replay scenarios with adversarial timing to reproduce intermittent races and return minimal failing sequences.",
+  },
   validate_scenario: {
     status: "available",
     tools: ["validate_scenario"],
