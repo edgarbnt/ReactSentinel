@@ -645,8 +645,8 @@ function buildProbableCause(entry: RenderCountRecord): RenderHotspotCause {
   }
 
   return {
-    type: "parent_render",
-    summary: "Recent renders kept repeating without a dominant local signal in props, hooks, or contexts, so parent-driven churn is the most likely cause.",
+    type: "unknown",
+    summary: "Recent renders kept repeating, but React-Sentinel could not isolate one dominant cause from props, hooks, contexts, or parent churn.",
   };
 }
 

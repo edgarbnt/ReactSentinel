@@ -136,10 +136,10 @@ function createFixVerdict(seed: {
   patched: PatchedValidationScenarioResponse;
   regressionAssertions: Assertion[];
 }): DiagnosticVerdict<VerificationVerdict, FixVerificationRawData> {
-  const targetAssertionCount = Math.max(seed.baseline.assertions.length - seed.regressionAssertions.length, 0);
-  const baselineTargetFailures = countAssertionFailures(seed.baseline.assertions.slice(0, targetAssertionCount));
-  const patchedTargetFailures = countAssertionFailures(seed.patched.report.assertions.slice(0, targetAssertionCount));
-  const regressionFailureCount = countAssertionFailures(seed.patched.report.assertions.slice(targetAssertionCount));
+  const targetAssertionSliceEnd = Math.max(seed.baseline.assertions.length - seed.regressionAssertions.length, 0);
+  const baselineTargetFailures = countAssertionFailures(seed.baseline.assertions.slice(0, targetAssertionSliceEnd));
+  const patchedTargetFailures = countAssertionFailures(seed.patched.report.assertions.slice(0, targetAssertionSliceEnd));
+  const regressionFailureCount = countAssertionFailures(seed.patched.report.assertions.slice(targetAssertionSliceEnd));
   const verdict: VerificationVerdict =
     baselineTargetFailures > 0 && patchedTargetFailures === 0 && regressionFailureCount === 0
       ? "CONFIRMED"
