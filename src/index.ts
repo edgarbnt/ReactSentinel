@@ -18,6 +18,7 @@ import { z } from "zod";
 import { ok, err } from "./types.js";
 import type { ToolResponse } from "./types.js";
 import { browserManager, DEFAULT_CDP_ENDPOINT } from "./browser/index.js";
+import type { BrowserModePreference } from "./browser/protocol.js";
 import {
   createServerInfoPayload,
   summarizeCapabilities,
@@ -85,6 +86,7 @@ type CliCommand =
 type StartCommandOptions = {
   replayHeadless: boolean;
   cdpEndpoint: string;
+  browserMode: BrowserModePreference;
   verbose: boolean;
 };
 
@@ -315,21 +317,23 @@ export async function startServer(options?: StartCommandOptions): Promise<void> 
   browserManager.configureDefaults({
     replayHeadless: options?.replayHeadless,
     cdpEndpoint: options?.cdpEndpoint,
+    browserMode: options?.browserMode,
   });
 
   const server = createServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
-    `[react-sentinel] MCP server started (stdio transport, replay ${options?.replayHeadless === false ? "headed" : "headless"}, CDP ${browserManager.getDefaultCdpEndpoint()}) ✅`
+    `[react-sentinel] MCP server started (stdio transport, browser mode ${options?.browserMode ?? "replay"}, replay ${options?.replayHeadless === false ? "headed" : "headless"}, CDP ${browserManager.getDefaultCdpEndpoint()}) ✅`
   );
   if (options?.verbose) {
     const payload = buildServerInfoResponse();
     console.error(
-      `[react-sentinel] Verbose startup metadata ${JSON.stringify({
-        command: "mcp",
-        transport: payload.transport,
-        replayDefault: options.replayHeadless === false ? "headed" : "headless",
+        `[react-sentinel] Verbose startup metadata ${JSON.stringify({
+          command: "mcp",
+          transport: payload.transport,
+          browserMode: options?.browserMode ?? "replay",
+          replayDefault: options.replayHeadless === false ? "headed" : "headless",
         cdpEndpoint: browserManager.getDefaultCdpEndpoint(),
         capabilitySummary: summarizeCapabilities(payload.capabilities),
         capabilities: payload.capabilities,
@@ -355,8 +359,8 @@ function formatHelp(): string {
     `Public npm package: ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME}`,
     "",
     "Usage:",
-    "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>]",
-    "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>]",
+    "  react-sentinel start [--headless|--headed] [--cdp-endpoint <url>] [--browser-mode <auto|replay|managed>]",
+    "  react-sentinel mcp [--headless|--headed] [--cdp-endpoint <url>] [--browser-mode <auto|replay|managed>]",
     `  react-sentinel init-mcp [--client <${formatInitMcpClientList()}>] [--mode <local|global|npx>]`,
     "  react-sentinel init-agent-pack [--path <dir>] [--mode <local|global|npx>]",
     "  react-sentinel install-agent-pack [--path <dir>] [--mode <local|global|npx>]",
@@ -382,6 +386,7 @@ function formatHelp(): string {
     `  --cdp-endpoint <url>  Override the default Chrome DevTools endpoint (default: ${DEFAULT_CDP_ENDPOINT}).`,
     "  --headed              Start replay sessions in visible Chromium mode by default.",
     "  --headless            Force replay sessions to stay headless (default).",
+    "  --browser-mode <mode> Choose replay, managed, or auto browser provisioning (default: replay).",
     "  --verbose             Print agent-friendly startup metadata to stderr.",
     "  --json                Print doctor results as JSON.",
     "  --path <dir>          Base directory scanned by detect-project (defaults to the current directory).",
@@ -397,6 +402,7 @@ function formatHelp(): string {
     "",
     "Examples:",
     `  npx -y ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME} mcp --headed`,
+    `  npx -y ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME} mcp --browser-mode managed --headed`,
     `  npx -y ${REACT_SENTINEL_PUBLIC_PACKAGE_NAME} doctor --json`,
     "  react-sentinel detect-project --path . --target-url http://127.0.0.1:3000 --json",
     "  react-sentinel doctor --config-path ~/.config/Claude/claude_desktop_config.json",
@@ -432,6 +438,7 @@ function parseStartOptions(args: string[]): { options: StartCommandOptions; help
     args,
     allowPositionals: false,
     options: {
+      "browser-mode": { type: "string" },
       "cdp-endpoint": { type: "string" },
       headless: { type: "boolean", default: false },
       headed: { type: "boolean", default: false },
@@ -445,10 +452,16 @@ function parseStartOptions(args: string[]): { options: StartCommandOptions; help
     throw new Error("Choose either --headless or --headed, not both.");
   }
 
+  const browserMode = parsed.values["browser-mode"] ?? "replay";
+  if (browserMode !== "auto" && browserMode !== "replay" && browserMode !== "managed") {
+    throw new Error('Invalid value for --browser-mode. Use "auto", "replay", or "managed".');
+  }
+
   return {
     options: {
       replayHeadless: parsed.values.headed ? false : true,
       cdpEndpoint: parseCdpEndpoint(parsed.values["cdp-endpoint"]),
+      browserMode: browserMode as BrowserModePreference,
       verbose: parsed.values.verbose,
     },
     help: parsed.values.help,
@@ -671,6 +684,7 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
   }
 
   const attachCheck = await browserManager.getAttachStatus(options.cdpEndpoint);
+  const managedStatus = await browserManager.getManagedBrowserStatus();
   const capabilitiesCheck = validateCapabilities();
   let configCheck:
     | undefined
@@ -752,6 +766,37 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
             error: attachCheck.error,
             help: attachCheck.help,
           },
+      managedBrowser: managedStatus.available
+        ? {
+            status: "pass",
+            active: managedStatus.active,
+            endpoint: managedStatus.endpoint,
+            launchCommand: managedStatus.launchCommand,
+          }
+        : {
+            status: "warn",
+            active: managedStatus.active,
+            endpoint: managedStatus.endpoint,
+            launchCommand: managedStatus.launchCommand,
+            reason: managedStatus.reason ?? "Managed Chromium is unavailable in this environment.",
+          },
+      browserModeRecommendation: attachCheck.ready
+        ? {
+            recommended: "user-attach",
+            reason: "A user Chrome CDP endpoint is available. Keep attach mode gated behind select_attach_tab confirmation.",
+            fallback: managedStatus.available ? "managed" : "replay",
+          }
+        : managedStatus.available
+          ? {
+              recommended: "managed",
+              reason: "User Chrome CDP is unavailable, but React-Sentinel can launch an isolated managed Chromium with CDP enabled.",
+              fallback: "replay",
+            }
+          : {
+              recommended: "replay",
+              reason: "Live attach is unavailable and managed Chromium is not ready, so replay mode is the safest default.",
+              fallback: "replay",
+            },
       capabilities: capabilitiesCheck,
       ...(configCheck ? { mcpConfig: configCheck } : {}),
     },
@@ -772,6 +817,10 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
       report.checks.attachEndpoint.status === "pass"
         ? `PASS attach endpoint ready at ${report.checks.attachEndpoint.endpoint}`
         : `WARN attach endpoint ${report.checks.attachEndpoint.error}`,
+      report.checks.managedBrowser.status === "pass"
+        ? `PASS managed browser available via ${report.checks.managedBrowser.launchCommand}`
+        : `WARN managed browser ${report.checks.managedBrowser.reason}`,
+      `INFO recommended browser mode: ${report.checks.browserModeRecommendation.recommended} (${report.checks.browserModeRecommendation.reason})`,
       report.checks.capabilities.status === "pass"
         ? `PASS capability registry matches ${report.checks.capabilities.registeredTools.length} registered MCP tools`
         : "FAIL capability registry is inconsistent with the registered MCP tools",
@@ -780,6 +829,10 @@ async function runDoctor(options: DoctorCommandOptions): Promise<void> {
     if (report.checks.attachEndpoint.status !== "pass") {
       lines.push(`Hint: ${report.checks.attachEndpoint.help}`);
     }
+    if (report.checks.managedBrowser.status === "pass") {
+      lines.push(`Managed mode: ${report.checks.managedBrowser.launchCommand}`);
+    }
+    lines.push(`Fallback mode: ${report.checks.browserModeRecommendation.fallback}`);
 
     if (report.checks.capabilities.status === "fail") {
       for (const issue of report.checks.capabilities.issues) {

@@ -48,7 +48,7 @@ export function register(server: McpServer): void {
     "get_session_status",
     [
       "Return the current browser session mode used by React-Sentinel before you run runtime tools.",
-      "Use this instead of guessing from config files when you need to know whether the next tool will hit a live attached tab or the isolated replay browser.",
+      "Use this instead of guessing from config files when you need to know whether the next tool will hit a live attached tab, the managed browser, or the isolated replay browser.",
       "Reports the active mode plus the current replay headless/headed configuration.",
     ].join(" "),
     {},

@@ -10,6 +10,11 @@
  *   - Navigation errors (ECONNREFUSED, timeout) return structured errors.
  */
 
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { createServer } from "node:net";
+import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import type { Browser, BrowserContext, CDPSession, Page, ConsoleMessage } from "playwright";
 import type {
@@ -24,6 +29,7 @@ import type {
   AttachTabSelector,
   AttachTabsResponse,
   AttachTabSelectionResponse,
+  BrowserModePreference,
   NetworkEvent,
   NetworkEventsResponse,
   ReplayNavigationResponse,
@@ -75,6 +81,7 @@ import {
 import { readHydrationIssuesFromConsoleEvents as readHydrationIssues } from "../diagnostics/hydration.js";
 
 export const DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9222";
+const DEFAULT_MANAGED_BROWSER_HOST = "127.0.0.1";
 
 type RuntimeBridgeInitArgs = {
   networkBufferGlobalKey: string;
@@ -198,12 +205,40 @@ function buildRuntimeBridgeSource(args: RuntimeBridgeInitArgs): string {
   })();`;
 }
 
+async function allocateTcpPort(host: string = DEFAULT_MANAGED_BROWSER_HOST): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, host, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close(() => reject(new Error("Failed to allocate a TCP port for managed Chrome.")));
+        return;
+      }
+
+      const { port } = address;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private replayHeadless = true;
   private defaultCdpEndpoint = DEFAULT_CDP_ENDPOINT;
+  private browserMode: BrowserModePreference = "replay";
   private replaySessionId: number | null = null;
   private nextReplaySessionId = 1;
   private attachedBrowser: Browser | null = null;
@@ -211,6 +246,11 @@ export class BrowserManager {
   private attachedEndpoint: string | null = null;
   private attachedTargetId: string | null = null;
   private attachSelection: { endpoint: string; tab: AttachTabInfo; selectedAt: string } | null = null;
+  private managedBrowser: Browser | null = null;
+  private managedPage: Page | null = null;
+  private managedEndpoint: string | null = null;
+  private managedUserDataDir: string | null = null;
+  private managedBrowserProcess: ReturnType<typeof spawn> | null = null;
   private activeRuntimePatches: RuntimePatchRecord[] = [];
 
   private consoleEvents: ConsoleEvent[] = [];
@@ -234,6 +274,8 @@ export class BrowserManager {
   };
   private static readonly cdpHelpMessage =
     "Launch Chrome with remote debugging, for example: google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-cdp";
+  private static readonly managedModeHelpMessage =
+    "Or restart React-Sentinel with --browser-mode managed --headed to launch an isolated managed Chromium with CDP enabled automatically.";
 
   private static normalizeText(value: string): string {
     return value.trim().toLowerCase();
@@ -556,6 +598,7 @@ export class BrowserManager {
   configureDefaults(options: {
     replayHeadless?: boolean;
     cdpEndpoint?: string;
+    browserMode?: BrowserModePreference;
   }): void {
     if (typeof options.replayHeadless === "boolean") {
       this.replayHeadless = options.replayHeadless;
@@ -563,6 +606,10 @@ export class BrowserManager {
 
     if (typeof options.cdpEndpoint === "string") {
       this.defaultCdpEndpoint = options.cdpEndpoint;
+    }
+
+    if (typeof options.browserMode === "string") {
+      this.browserMode = options.browserMode;
     }
   }
 
@@ -724,20 +771,32 @@ export class BrowserManager {
       this.attachedPage && !this.attachedPage.isClosed()
         ? this.attachedPage.url()
         : this.attachSelection?.tab.url ?? null;
+    const managedPageUrl =
+      this.managedPage && !this.managedPage.isClosed()
+        ? this.managedPage.url()
+        : null;
     const replayPageUrl =
       this.page && !this.page.isClosed()
         ? this.page.url()
         : null;
-    const mode: SessionInfo["mode"] = this.attachSelection ? "attach" : "replay";
-    const pageUrl = mode === "attach" ? attachPageUrl : replayPageUrl;
+    const mode: SessionInfo["mode"] = this.attachSelection
+      ? "attach"
+      : this.managedPage && !this.managedPage.isClosed()
+        ? "managed"
+        : "replay";
+    const pageUrl = mode === "attach" ? attachPageUrl : mode === "managed" ? managedPageUrl : replayPageUrl;
     const connected =
       mode === "attach"
         ? this.attachedPage !== null && !this.attachedPage.isClosed()
-        : this.page !== null && !this.page.isClosed();
+        : mode === "managed"
+          ? this.managedPage !== null && !this.managedPage.isClosed()
+          : this.page !== null && !this.page.isClosed();
     const title =
       mode === "attach"
         ? (await this.readPageTitle(this.attachedPage)) ?? this.attachSelection?.tab.title ?? null
-        : await this.readPageTitle(this.page);
+        : mode === "managed"
+          ? await this.readPageTitle(this.managedPage)
+          : await this.readPageTitle(this.page);
 
     return {
       mode,
@@ -761,6 +820,11 @@ export class BrowserManager {
         endpoint: this.attachSelection?.endpoint ?? null,
         selectedTab: this.attachSelection?.tab ?? null,
       },
+      managed: {
+        active: this.managedPage !== null && !this.managedPage.isClosed(),
+        endpoint: this.managedEndpoint,
+        userDataDir: this.managedUserDataDir,
+      },
     };
   }
 
@@ -783,6 +847,99 @@ export class BrowserManager {
       }
 
       console.error("[react-sentinel] Replay browser closed");
+    }
+  }
+
+  private async waitForManagedEndpoint(endpoint: string, timeoutMs: number = 10_000): Promise<void> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const status = await this.getAttachStatus(endpoint);
+      if (status.ready) {
+        return;
+      }
+      await delay(200);
+    }
+
+    throw new Error(`Managed Chromium did not expose CDP at ${endpoint} within ${timeoutMs}ms.`);
+  }
+
+  private async launchManagedBrowser(): Promise<void> {
+    if (this.managedBrowser && this.managedPage && !this.managedPage.isClosed()) {
+      return;
+    }
+
+    const executablePath = chromium.executablePath();
+    const port = await allocateTcpPort();
+    const userDataDir = await mkdtemp(path.join(tmpdir(), "react-sentinel-managed-"));
+    const endpoint = `http://${DEFAULT_MANAGED_BROWSER_HOST}:${port}`;
+    const args = [
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${userDataDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      ...(this.replayHeadless ? ["--headless=new"] : []),
+      "about:blank",
+    ];
+
+    const child = spawn(executablePath, args, {
+      stdio: "ignore",
+      detached: false,
+    });
+
+    child.once("error", (error) => {
+      console.error(`[react-sentinel] Managed Chromium launch failed: ${String(error)}`);
+    });
+
+    try {
+      await this.waitForManagedEndpoint(endpoint);
+      const browser = await chromium.connectOverCDP(endpoint);
+      const context = browser.contexts()[0];
+      const page = context?.pages()[0] ?? (context ? await context.newPage() : null);
+      if (!page) {
+        throw new Error("Managed Chromium started but no page was available.");
+      }
+
+      await this.installRuntimeBridge(page);
+      this.managedBrowser = browser;
+      this.managedPage = page;
+      this.managedEndpoint = endpoint;
+      this.managedUserDataDir = userDataDir;
+      this.managedBrowserProcess = child;
+      this.activateRuntimePage(page);
+      console.error(
+        `[react-sentinel] Managed Chromium launched (${this.replayHeadless ? "headless" : "headed"}, CDP ${endpoint})`
+      );
+    } catch (error) {
+      child.kill("SIGTERM");
+      await rm(userDataDir, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async closeManagedSession(): Promise<void> {
+    const managedPage = this.managedPage;
+
+    try {
+      if (this.managedBrowser) {
+        await this.managedBrowser.close().catch(() => undefined);
+      }
+    } finally {
+      if (this.managedBrowserProcess && !this.managedBrowserProcess.killed) {
+        this.managedBrowserProcess.kill("SIGTERM");
+      }
+      if (this.managedUserDataDir) {
+        await rm(this.managedUserDataDir, { recursive: true, force: true }).catch(() => undefined);
+      }
+      this.managedBrowser = null;
+      this.managedPage = null;
+      this.managedEndpoint = null;
+      this.managedUserDataDir = null;
+      this.managedBrowserProcess = null;
+
+      if (this.runtimeEventPage === managedPage) {
+        this.runtimeEventPage = null;
+        this.consoleEvents = [];
+      }
     }
   }
 
@@ -915,6 +1072,7 @@ export class BrowserManager {
   /** Close browser and release all resources. */
   async close(): Promise<void> {
     await this.clearAttachConnection();
+    await this.closeManagedSession();
     await this.closeReplaySession();
   }
 
@@ -944,9 +1102,39 @@ export class BrowserManager {
     return page;
   }
 
+  private async getManagedPage(
+    url: string,
+    options?: {
+      resetSession?: boolean;
+      waitUntil?: ReplayWaitUntil;
+      timeoutMs?: number;
+    }
+  ): Promise<Page> {
+    if (options?.resetSession) {
+      await this.closeManagedSession();
+    }
+    await this.launchManagedBrowser();
+    const page = this.managedPage;
+    if (!page) {
+      throw new Error("Managed Chromium is unavailable.");
+    }
+
+    await this.navigatePage(page, url, options?.waitUntil ?? "domcontentloaded", options?.timeoutMs ?? 10_000);
+    this.activateRuntimePage(page);
+    return page;
+  }
+
   private async getRuntimePage(url: string): Promise<Page> {
     if (this.attachSelection) {
       return this.getAttachedPage();
+    }
+
+    if (this.browserMode === "managed") {
+      return this.getManagedPage(url);
+    }
+
+    if (this.browserMode === "auto" && this.managedPage && !this.managedPage.isClosed()) {
+      return this.getManagedPage(url);
     }
 
     const page = await this.getSandboxPage(url);
@@ -964,7 +1152,15 @@ export class BrowserManager {
     }
   ): Promise<Page> {
     if (url) {
+      if (this.browserMode === "managed") {
+        return this.getManagedPage(url, options);
+      }
       return this.getSandboxPage(url, options);
+    }
+
+    if (this.browserMode === "managed" && this.managedPage && !this.managedPage.isClosed()) {
+      this.activateRuntimePage(this.managedPage);
+      return this.managedPage;
     }
 
     if (!this.page || this.page.isClosed() || this.page.url() === "about:blank") {
@@ -976,14 +1172,56 @@ export class BrowserManager {
   }
 
   private static buildAttachHelpMessage(): string {
-    return BrowserManager.cdpHelpMessage;
+    return [
+      BrowserManager.cdpHelpMessage,
+      BrowserManager.managedModeHelpMessage,
+      "If you do not need a persistent browser profile, keep using replay mode with browser_ping or navigate_replay.",
+    ].join(" ");
   }
 
   private static buildAttachUnavailableMessage(endpoint: string, reason: string): string {
     return [
       `Chrome CDP is unavailable at ${endpoint}: ${reason}.`,
+      BrowserManager.managedModeHelpMessage,
       "You can keep using replay mode with browser_ping or navigate_replay while live Chrome attach is unavailable.",
     ].join(" ");
+  }
+
+  getBrowserModePreference(): BrowserModePreference {
+    return this.browserMode;
+  }
+
+  async getManagedBrowserStatus(): Promise<{
+    available: boolean;
+    active: boolean;
+    endpoint: string | null;
+    userDataDir: string | null;
+    launchCommand: string;
+    reason?: string;
+  }> {
+    try {
+      const executablePath = chromium.executablePath();
+      await access(executablePath);
+      return {
+        available: executablePath.length > 0,
+        active: this.managedPage !== null && !this.managedPage.isClosed(),
+        endpoint: this.managedEndpoint,
+        userDataDir: this.managedUserDataDir,
+        launchCommand: "react-sentinel mcp --browser-mode managed --headed",
+      };
+    } catch (error) {
+      return {
+        available: false,
+        active: false,
+        endpoint: this.managedEndpoint,
+        userDataDir: this.managedUserDataDir,
+        launchCommand: "react-sentinel mcp --browser-mode managed --headed",
+        reason:
+          error instanceof Error
+            ? `${error.message}. Install Chromium once with \`npx playwright install chromium\` to enable managed mode.`
+            : String(error),
+      };
+    }
   }
 
   async navigateReplay(
@@ -1269,7 +1507,10 @@ export class BrowserManager {
     const type = "ping" as const;
 
     try {
-      const page = await this.getSandboxPage(url);
+      const page =
+        this.browserMode === "managed"
+          ? await this.getManagedPage(url)
+          : await this.getSandboxPage(url);
       const data = await page.evaluate<PingData>(() => ({
         pong: true,
         url: document.URL,

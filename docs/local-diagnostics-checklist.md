@@ -28,6 +28,12 @@ Fix:
 google-chrome --remote-debugging-port=9222 --user-data-dir=/tmp/react-sentinel-cdp
 ```
 
+Or let React-Sentinel launch an isolated managed Chromium for you:
+
+```bash
+react-sentinel mcp --browser-mode managed --headed
+```
+
 Then retry:
 
 1. `get_attach_status`
@@ -35,6 +41,8 @@ Then retry:
 3. `select_attach_tab` with `confirm: true`
 
 If you do not need the live browser, skip attach mode and stay in replay mode with `browser_ping` or `navigate_replay`.
+
+See [browser-modes.md](browser-modes.md) for the differences between user Chrome attach, managed Chrome, and replay sandbox.
 
 ## 3. If no live browser tab is selected
 
