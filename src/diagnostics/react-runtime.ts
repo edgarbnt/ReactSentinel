@@ -521,6 +521,30 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     return "Unknown";
   }
 
+  function getTypeDisplayName(type: unknown): string | null {
+    if (!type) return null;
+    if (typeof type === "string") return type;
+    if (typeof type === "function") {
+      const fn = type as { displayName?: string; name?: string };
+      return fn.displayName || fn.name || null;
+    }
+    if (typeof type === "object") {
+      const typeRecord = type as Record<string, unknown>;
+      if (typeof typeRecord.displayName === "string" && typeRecord.displayName.length > 0) {
+        return typeRecord.displayName;
+      }
+      if (typeof typeRecord.render === "function") {
+        const render = typeRecord.render as { displayName?: string; name?: string };
+        return `ForwardRef(${render.displayName || render.name || "Anonymous"})`;
+      }
+      if ("type" in typeRecord) {
+        const inner = getTypeDisplayName(typeRecord.type);
+        return inner ? `Memo(${inner})` : "Memo";
+      }
+    }
+    return null;
+  }
+
   function isReactElementLike(value: unknown): boolean {
     return Boolean(value && typeof value === "object" && "$$typeof" in (value as Record<string, unknown>));
   }
@@ -534,13 +558,8 @@ export function inspectReactRuntime(request: ReactRuntimeInspectRequest): ReactR
     if (fiber.tag === 10) {
       return `${getContextName(getFiberContextObject(fiber))}.Provider`;
     }
-    if (fiber.type && typeof fiber.type === "object") {
-      const typeRecord = fiber.type as Record<string, unknown>;
-      if (typeof typeRecord.displayName === "string" && typeRecord.displayName.length > 0) {
-        return typeRecord.displayName;
-      }
-      return "Context/Memo/ForwardRef";
-    }
+    const resolvedName = getTypeDisplayName(fiber.type);
+    if (resolvedName) return resolvedName;
     if (fiber.tag === 3) return "HostRoot";
     return "Unknown";
   }

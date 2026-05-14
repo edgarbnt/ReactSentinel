@@ -28,7 +28,8 @@ export interface InteractionData {
 
 export type AssertionPrimitive = string | number | boolean | null;
 
-export type SessionMode = "replay" | "attach";
+export type SessionMode = "replay" | "attach" | "managed";
+export type BrowserModePreference = "auto" | "replay" | "managed";
 
 export interface ReplayConfig {
   headless: boolean;
@@ -93,6 +94,11 @@ export interface SessionInfo {
     active: boolean;
     endpoint: string | null;
     selectedTab: AttachTabInfo | null;
+  };
+  managed: {
+    active: boolean;
+    endpoint: string | null;
+    userDataDir: string | null;
   };
 }
 
